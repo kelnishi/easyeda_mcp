@@ -237,6 +237,53 @@ describe("mutation confirmation guard", () => {
   });
 });
 
+describe("library device search", () => {
+  const DEVICE = {
+    name: "AP63205QWU-7",
+    uuid: "5cf4f756",
+    libraryUuid: "0819f05c",
+    symbolUuid: "aea4f0f9",
+    footprintName: "SOT-23-6",
+    footprintUuid: "044d8cf8",
+    manufacturer: "DIODES",
+    manufacturerId: "AP63205QWU-7",
+    supplierId: "C5248537",
+    description: "a very long parametric description ".repeat(20),
+    otherProperty: { Datasheet: "https://example/ds.pdf", "JLCPCB Part Class": "Extended Part", Features: "x".repeat(400) }
+  };
+
+  function client() {
+    return makeClient({
+      endpoint: "ws://127.0.0.1:8765",
+      getStatus: () => ({ connected: true, updatedAt: new Date().toISOString() }),
+      call: vi.fn(async () => ({ mode: "search", devices: [DEVICE] }))
+    });
+  }
+
+  it("returns identifying fields, not the parametric table", async () => {
+    // A real two-result search ran to roughly 4KB of parametrics; at limit 20
+    // the response is unusable.
+    const result = await (await client()).callTool({
+      name: "easyeda_find_library_device",
+      arguments: { query: "AP63205" }
+    });
+
+    const device = (result.structuredContent as any).devices[0];
+    expect(device).toMatchObject({ lcscId: "C5248537", footprintUuid: "044d8cf8", symbolUuid: "aea4f0f9" });
+    expect(device.otherProperty).toBeUndefined();
+    expect(device.description).toBeUndefined();
+  });
+
+  it("returns the whole record when asked", async () => {
+    const result = await (await client()).callTool({
+      name: "easyeda_find_library_device",
+      arguments: { query: "AP63205", detail: "full" }
+    });
+
+    expect((result.structuredContent as any).devices[0].otherProperty).toBeDefined();
+  });
+});
+
 describe("symbol source tools", () => {
   const SYMBOL = '{"type":"PIN","ticket":1,"id":"e0"}||{"pinNumber":"1"}|';
 

@@ -834,13 +834,13 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     }
   );
 
-  registerReadTool(server, bridge, {
-    name: "easyeda_find_library_device",
-    title: "Find an EasyEDA/LCSC library device",
-    description:
-      "Looks up library devices by LCSC id, by uuid, or by keyword. A device is what carries a footprint, and EasyEDA refuses to export a netlist until components have footprints -- so this is the step that turns a sheet of generic boxes into a verifiable one.",
-    method: "findLibraryDevice",
-    inputSchema: {
+  server.registerTool(
+    "easyeda_find_library_device",
+    {
+      title: "Find an EasyEDA/LCSC library device",
+      description:
+        "Looks up library devices by LCSC id, by uuid, or by keyword. A device is what carries a footprint, and EasyEDA refuses to export a netlist until components have footprints -- so this is the step that turns a sheet of generic boxes into a verifiable one. Returns the identifying fields by default; a full device record carries its entire parametric table and runs to kilobytes each.",
+      inputSchema: {
       query: z.string().min(1).optional().describe("Keyword search, e.g. 'AP63205' or 'AO3400'."),
       lcscIds: z.array(z.string().min(1)).optional().describe("Exact LCSC ids, e.g. ['C7420417']. Preferred when the BOM names the part."),
       uuid: z.string().min(1).optional().describe("Device uuid, e.g. from a component's Device attribute."),
@@ -848,10 +848,53 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
       classification: z.string().min(1).optional(),
       limit: z.number().int().positive().max(100).default(20),
       page: z.number().int().positive().default(1),
+      detail: z
+        .enum(["summary", "full"])
+        .default("summary")
+        .describe("'full' returns each device's whole parametric table. Only for one already-chosen part."),
       timeoutMs: DefaultTimeoutSchema.default(30_000)
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
     },
-    summary: "Searched the EasyEDA device library."
-  });
+    async ({ detail, timeoutMs, ...params }) => {
+      try {
+        const result = (await bridge.call("findLibraryDevice", params, timeoutMs)) as {
+          mode?: string;
+          devices?: Array<Record<string, any>>;
+        };
+        const devices = result?.devices ?? [];
+        const shaped =
+          detail === "full"
+            ? devices
+            : devices.map((device) => ({
+                name: device?.name,
+                uuid: device?.uuid,
+                libraryUuid: device?.libraryUuid,
+                symbolUuid: device?.symbolUuid,
+                footprintName: device?.footprintName,
+                footprintUuid: device?.footprintUuid,
+                manufacturerPart: device?.manufacturerId,
+                manufacturer: device?.manufacturer,
+                lcscId: device?.supplierId,
+                datasheet: device?.otherProperty?.Datasheet,
+                partClass: device?.otherProperty?.["JLCPCB Part Class"]
+              }));
+
+        return ok(`Found ${shaped.length} device(s) by ${result?.mode ?? "search"}.`, {
+          mode: result?.mode,
+          detail,
+          devices: shaped
+        });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
 
   server.registerTool(
     "easyeda_import_schematic",
