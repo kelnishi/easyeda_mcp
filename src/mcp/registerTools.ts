@@ -711,6 +711,19 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
   });
 
   registerReadTool(server, bridge, {
+    name: "easyeda_open_project",
+    title: "Open a project in EasyEDA Pro",
+    description:
+      "Loads a project into the editor. Opening a project and opening a sheet are separate calls: with no project loaded, easyeda_open_document returns no tab and raises nothing. Project uuids come from easyeda_list_schematics as parentProjectUuid.",
+    method: "openProject",
+    inputSchema: {
+      uuid: z.string().min(1),
+      timeoutMs: DefaultTimeoutSchema.default(30_000)
+    },
+    summary: "Opened an EasyEDA Pro project."
+  });
+
+  registerReadTool(server, bridge, {
     name: "easyeda_open_document",
     title: "Open a document in the EasyEDA Pro editor",
     description:
@@ -718,6 +731,11 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     method: "openDocument",
     inputSchema: {
       uuid: z.string().min(1).describe("Document uuid — a schematic PAGE uuid, not the schematic's."),
+      projectUuid: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Open this project first. Opening a sheet fails silently when its project is not loaded; parentProjectUuid comes from easyeda_list_schematics."),
       activate: z.boolean().default(true).describe("Bring the opened tab to the front."),
       splitScreenId: z.string().min(1).optional(),
       timeoutMs: DefaultTimeoutSchema.default(30_000)

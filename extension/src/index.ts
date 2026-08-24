@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.2.9";
+const EXTENSION_VERSION = "0.2.10";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -108,6 +108,7 @@ const handlers: Record<string, (params: Record<string, any>) => Promise<unknown>
   findLibraryDevice,
   getSymbolSource,
   updateSymbolSource,
+  openProject,
   openDocument,
   closeDocument,
   confirmedAction
@@ -753,10 +754,38 @@ async function exportPdf(params: Record<string, any>): Promise<Record<string, un
  * with nothing open at all -- so the caller needs a way to put a sheet on screen
  * rather than asking a person to click it.
  */
+async function openProject(params: Record<string, any>): Promise<Record<string, unknown>> {
+  ensureApi("dmt_Project", "openProject");
+  const uuid = requireUuid(params.uuid, "openProject");
+  await eda.dmt_Project.openProject(uuid);
+  const projectInfo = await optionalCall(() => eda.dmt_Project.getCurrentProjectInfo());
+  return { uuid, project: sanitize(projectInfo), betaApi: true };
+}
+
+/**
+ * Opening a sheet and opening a project are separate calls, and the sheet one
+ * fails silently -- returning undefined, raising nothing -- when the project
+ * holding it is not loaded. Passing projectUuid loads it first.
+ */
 async function openDocument(params: Record<string, any>): Promise<Record<string, unknown>> {
   ensureApi("dmt_EditorControl", "openDocument");
   const uuid = requireUuid(params.uuid, "openDocument");
+
+  if (typeof params.projectUuid === "string" && params.projectUuid) {
+    await optionalCall(() =>
+      eda.dmt_Project?.openProject ? eda.dmt_Project.openProject(params.projectUuid) : undefined
+    );
+  }
+
   const tabId = await eda.dmt_EditorControl.openDocument(uuid, params.splitScreenId);
+  if (!tabId) {
+    const project = await optionalCall(() => eda.dmt_Project?.getCurrentProjectInfo());
+    throw apiError(
+      "document_not_opened",
+      `openDocument returned no tab for ${uuid}. The usual cause is that its project is not open -- pass projectUuid, or open the project first.`,
+      { currentProject: sanitize(project) }
+    );
+  }
 
   if (params.activate !== false && tabId) {
     await optionalCall(() =>
@@ -1142,7 +1171,8 @@ function detectCapabilities(): Record<string, boolean> {
     librarySearch: Boolean(eda.lib_Device?.search || eda.lib_Device?.getByLcscIds),
     symbolSourceRead: Boolean(eda.lib_Symbol?.openInEditor),
     symbolSourceWrite: Boolean(eda.lib_Symbol?.updateDocumentSource),
-    documentOpen: Boolean(eda.dmt_EditorControl?.openDocument)
+    documentOpen: Boolean(eda.dmt_EditorControl?.openDocument),
+    projectOpen: Boolean(eda.dmt_Project?.openProject)
   };
 }
 
