@@ -300,6 +300,69 @@ describe("EasyEDA extension bridge handlers", () => {
     expect(resultMessage.error.code).toBe("missing_source");
   });
 
+  describe("schematic check", () => {
+    it("counts violations inside severity buckets rather than counting the buckets", async () => {
+      // A live sheet answered [{type:"fatalError",count:41},{type:"warn",count:4}].
+      // Treating each bucket as one violation reported 45 problems as 2.
+      vi.stubGlobal("eda", {
+        ...(globalThis as { eda: Record<string, unknown> }).eda,
+        sch_Drc: {
+          check: vi.fn(async () => [
+            { type: "fatalError", count: 41 },
+            { type: "warn", count: 4 }
+          ])
+        }
+      });
+
+      const extension = await import("./index.js");
+      extension.connect();
+      await registration.onMessage?.({
+        data: JSON.stringify({ kind: "call", requestId: "drc-1", method: "schematicCheck", params: {} })
+      } as MessageEvent<string>);
+
+      const result = JSON.parse(sentMessages.at(-1)?.message ?? "{}").result;
+      expect(result.violationCount).toBe(45);
+      expect(result.detail).toBe("aggregate");
+      expect(result.passed).toBe(false);
+    });
+
+    it("passes through per-violation detail when EasyEDA gives it", async () => {
+      vi.stubGlobal("eda", {
+        ...(globalThis as { eda: Record<string, unknown> }).eda,
+        sch_Drc: {
+          check: vi.fn(async () => ["R1 has no footprint", "U3 pin P- is floating"])
+        }
+      });
+
+      const extension = await import("./index.js");
+      extension.connect();
+      await registration.onMessage?.({
+        data: JSON.stringify({ kind: "call", requestId: "drc-2", method: "schematicCheck", params: {} })
+      } as MessageEvent<string>);
+
+      const result = JSON.parse(sentMessages.at(-1)?.message ?? "{}").result;
+      expect(result.violationCount).toBe(2);
+      expect(result.detail).toBe("verbose");
+    });
+
+    it("reports a clean sheet from a bare boolean", async () => {
+      vi.stubGlobal("eda", {
+        ...(globalThis as { eda: Record<string, unknown> }).eda,
+        sch_Drc: { check: vi.fn(async () => true) }
+      });
+
+      const extension = await import("./index.js");
+      extension.connect();
+      await registration.onMessage?.({
+        data: JSON.stringify({ kind: "call", requestId: "drc-3", method: "schematicCheck", params: {} })
+      } as MessageEvent<string>);
+
+      const result = JSON.parse(sentMessages.at(-1)?.message ?? "{}").result;
+      expect(result.passed).toBe(true);
+      expect(result.detail).toBe("none");
+    });
+  });
+
   it("shows diagnostics with connection and document details", async () => {
     const extension = await import("./index.js");
 

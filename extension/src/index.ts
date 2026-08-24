@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.2.1";
+const EXTENSION_VERSION = "0.2.2";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -760,16 +760,43 @@ async function schematicCheck(params: Record<string, any>): Promise<Record<strin
     return { passed: raw, violations: [], detail: "none", strict, betaApi: true };
   }
 
-  const entries = Array.isArray(raw) ? raw : [raw];
-  const violations = entries
-    .filter((entry) => entry !== undefined && entry !== null)
-    .map((entry) => (typeof entry === "string" ? { description: entry } : sanitize(entry)));
+  const entries = (Array.isArray(raw) ? raw : [raw]).filter(
+    (entry) => entry !== undefined && entry !== null
+  );
+
+  // EasyEDA answers either with one record per violation or with a bucket per
+  // severity carrying a count. Counting buckets as violations reports 45
+  // problems as 2, so the two shapes are separated rather than merged.
+  const aggregates: Array<{ severity: string; count: number }> = [];
+  const violations: unknown[] = [];
+
+  for (const entry of entries) {
+    if (typeof entry === "string") {
+      violations.push({ description: entry });
+      continue;
+    }
+    const record = isRecord(entry) ? entry : undefined;
+    const count = record && typeof record.count === "number" ? record.count : undefined;
+    const severity = record ? pickString(record, ["type", "severity", "level"]) : undefined;
+    if (count !== undefined && severity && Object.keys(record ?? {}).length <= 3) {
+      aggregates.push({ severity, count });
+      continue;
+    }
+    violations.push(sanitize(entry));
+  }
+
+  const aggregateTotal = aggregates.reduce((sum, entry) => sum + entry.count, 0);
+  const violationCount = violations.length + aggregateTotal;
 
   return {
-    passed: violations.length === 0,
+    passed: violationCount === 0,
     violations,
-    violationCount: violations.length,
-    detail: violations.length ? "verbose" : "none",
+    aggregates,
+    violationCount,
+    detail: violations.length ? "verbose" : aggregates.length ? "aggregate" : "none",
+    hint: violations.length === 0 && aggregates.length
+      ? "EasyEDA reported counts only. Re-run with openPanel to read the individual violations in the editor."
+      : undefined,
     strict,
     betaApi: true
   };
