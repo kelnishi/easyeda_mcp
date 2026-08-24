@@ -421,6 +421,41 @@ describe("schematic analysis", () => {
   });
 });
 
+describe("mirrored y coordinates", () => {
+  it("connects a pin whose y is reported opposite to the wire's", () => {
+    // Taken from a live sheet: R1 pin 1 came back at (60, -300) while its stub
+    // wire ran from (60, 300). Matching only the literal point reported every
+    // pin on a correctly wired schematic as untouched, with no error raised.
+    const snapshot = buildSchematicSnapshot({
+      components: [component("R1", "$r1", "5K1")],
+      pinsByComponent: {
+        $r1: [pinAt("1", "1", undefined, 60, -300)]
+      },
+      wires: [wirePath("CC1", [[60, 300], [30, 300]])],
+      texts: [],
+      includeRaw: false
+    });
+
+    const [resolved] = snapshot.pins;
+    expect(resolved.connected).toBe(true);
+    expect(resolved.net).toBe("CC1");
+  });
+
+  it("still rejects a pin that touches no wire in either orientation", () => {
+    const snapshot = buildSchematicSnapshot({
+      components: [component("R2", "$r2", "10K")],
+      pinsByComponent: {
+        $r2: [pinAt("1", "1", undefined, 500, -500)]
+      },
+      wires: [wirePath("CC1", [[60, 300], [30, 300]])],
+      texts: [],
+      includeRaw: false
+    });
+
+    expect(snapshot.pins[0].connected).toBe(false);
+  });
+});
+
 function component(designator: string, primitiveId: string, value: string): Record<string, unknown> {
   return {
     primitiveType: "Component",

@@ -973,7 +973,7 @@ function resolvePinConnectivity(pin: SchematicPin, groups: ConnectivityGroup[], 
   if (pin.net) {
     const point = requiredPosition(pin.position);
     const touchingGroups = point
-      ? groups.filter((group) => group.segments.some((segment) => pointTouchesSegment(point, segment, tolerance)))
+      ? groups.filter((group) => pointTouchesAnySegment(point, group.segments, tolerance))
       : [];
     const matchingGroup = touchingGroups.find((group) => group.netNames.some((name) => sameText(name, pin.net)));
     return {
@@ -1001,7 +1001,7 @@ function resolvePinConnectivity(pin: SchematicPin, groups: ConnectivityGroup[], 
     };
   }
 
-  const touchingGroups = groups.filter((group) => group.segments.some((segment) => pointTouchesSegment(point, segment, tolerance)));
+  const touchingGroups = groups.filter((group) => pointTouchesAnySegment(point, group.segments, tolerance));
   const netNames = new Set(touchingGroups.map((group) => group.net).filter(isPresent));
   const nodeIds = unique(touchingGroups.map((group) => group.nodeId));
   if (netNames.size !== 1) {
@@ -1139,13 +1139,30 @@ function segmentTouchesSegment(left: Segment, right: Segment, tolerance: number)
     || pointTouchesSegment(right.end, left, tolerance);
 }
 
+/**
+ * EasyEDA reports pin and label positions in the runtime coordinate system and
+ * wire geometry in the document's, and the two disagree on the sign of y. A
+ * point must therefore be tested against its mirror as well as itself.
+ *
+ * Labels did this and pins did not, so every pin on a correctly wired sheet
+ * reported "Pin does not touch a wire group" -- geometry that lined up exactly
+ * still read as unconnected, and the tools said so with no error to notice.
+ */
+function pointCandidates(point: Required<Position>): Required<Position>[] {
+  return point.y === 0 ? [point] : [point, { x: point.x, y: -point.y }];
+}
+
+function pointTouchesAnySegment(point: Required<Position>, segments: Segment[], tolerance: number): boolean {
+  return pointCandidates(point).some((candidate) =>
+    segments.some((segment) => pointTouchesSegment(candidate, segment, tolerance)));
+}
+
 function labelTouchesSegments(label: SchematicLabel, segments: Segment[], tolerance: number): boolean {
   const point = requiredPosition(label.position);
   if (!point) {
     return false;
   }
-  const candidates = [point, { x: point.x, y: -point.y }];
-  return candidates.some((candidate) => segments.some((segment) => pointTouchesSegment(candidate, segment, tolerance)));
+  return pointTouchesAnySegment(point, segments, tolerance);
 }
 
 function pointTouchesSegment(point: Required<Position>, segment: Segment, tolerance: number): boolean {
