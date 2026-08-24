@@ -1100,9 +1100,49 @@ function buildConnectivityGroups(wireData: WireWithSegments[], labels: Schematic
   });
 }
 
+/**
+ * EasyEDA hands wire geometry back as a flat run of numbers, not as points or
+ * point-pairs:
+ *
+ *   [880,-200, 900,-200,  900,-200, 910,-200]
+ *
+ * Read item-by-item, every element is a number, so no point is recovered and the
+ * wire ends up with no segments at all -- which makes every pin on the sheet
+ * report "does not touch a wire group" no matter how exactly it is placed.
+ *
+ * A wire is a group of line primitives, so a length divisible by four is read as
+ * consecutive x1,y1,x2,y2 segments, matching the LINE records the editor stores.
+ * Anything else is read as a polyline, which is the only other shape this format
+ * takes.
+ */
+function flatNumbersToSegments(values: number[]): Segment[] {
+  const segments: Segment[] = [];
+
+  if (values.length % 4 === 0) {
+    for (let index = 0; index + 3 < values.length; index += 4) {
+      segments.push({
+        start: { x: values[index], y: values[index + 1] },
+        end: { x: values[index + 2], y: values[index + 3] }
+      });
+    }
+    return segments;
+  }
+
+  for (let index = 0; index + 3 < values.length; index += 2) {
+    segments.push({
+      start: { x: values[index], y: values[index + 1] },
+      end: { x: values[index + 2], y: values[index + 3] }
+    });
+  }
+  return segments;
+}
+
 function extractSegments(value: unknown): Segment[] {
   if (!Array.isArray(value)) {
     return [];
+  }
+  if (value.length >= 4 && value.every((item) => typeof item === "number")) {
+    return flatNumbersToSegments(value as number[]);
   }
   const segments: Segment[] = [];
   const points: Required<Position>[] = [];

@@ -421,6 +421,50 @@ describe("schematic analysis", () => {
   });
 });
 
+describe("flat wire geometry", () => {
+  it("connects a pin to a wire whose geometry is a flat number run", () => {
+    // Verbatim from the live sheet: wire e408's geometry, and R1's stub. Read as
+    // points, every element is a number, no point is recovered, and the wire has
+    // no segments -- which reported all 114 pins on a wired sheet as untouched.
+    const snapshot = buildSchematicSnapshot({
+      components: [component("Q3", "$q3", "NFET")],
+      pinsByComponent: {
+        $q3: [pinAt("1", "S", undefined, 900, -200)]
+      },
+      wires: [wirePath("PACK_NEG", [880, -200, 900, -200, 900, -200, 910, -200])],
+      texts: [],
+      includeRaw: false
+    });
+
+    expect(snapshot.pins[0].connected).toBe(true);
+    expect(snapshot.pins[0].net).toBe("PACK_NEG");
+  });
+
+  it("reads a four-number run as one segment", () => {
+    const snapshot = buildSchematicSnapshot({
+      components: [component("R1", "$r1", "5K1")],
+      pinsByComponent: { $r1: [pinAt("1", "1", undefined, 60, 300)] },
+      wires: [wirePath("CC1", [60, 300, 30, 300])],
+      texts: [],
+      includeRaw: false
+    });
+
+    expect(snapshot.pins[0].connected).toBe(true);
+  });
+
+  it("does not invent a connection to a pin off the wire", () => {
+    const snapshot = buildSchematicSnapshot({
+      components: [component("R2", "$r2", "10K")],
+      pinsByComponent: { $r2: [pinAt("1", "1", undefined, 500, 500)] },
+      wires: [wirePath("CC1", [60, 300, 30, 300])],
+      texts: [],
+      includeRaw: false
+    });
+
+    expect(snapshot.pins[0].connected).toBe(false);
+  });
+});
+
 describe("mirrored y coordinates", () => {
   it("connects a pin whose y is reported opposite to the wire's", () => {
     // Taken from a live sheet: R1 pin 1 came back at (60, -300) while its stub
