@@ -314,20 +314,56 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     summary: "Validated EasyEDA Pro schematic area."
   });
 
-  registerReadTool(server, bridge, {
-    name: "easyeda_verify_connections",
-    title: "Verify schematic connections",
-    description: "Runs generic read-only connection assertions against the active schematic, including pin/net checks and passive paths through resistors, capacitors, inductors, diodes, or LEDs.",
-    method: "verifyConnections",
-    inputSchema: {
-      checks: z.array(ConnectionCheckSchema).min(1).max(50).describe("Structured connection assertions to verify against the active schematic."),
-      includeRaw: z.boolean().default(false),
-      allPages: z.boolean().default(true),
-      maxHops: z.number().int().positive().max(20).default(4),
-      timeoutMs: DefaultTimeoutSchema.default(30_000)
+  server.registerTool(
+    "easyeda_verify_connections",
+    {
+      title: "Verify schematic connections",
+      description:
+        "Runs read-only connection assertions against the active schematic: pin/net checks, same-node, and passive paths through resistors, capacitors, inductors, diodes or LEDs. By default only failing checks carry their evidence, since a passing check's evidence is rarely read and a batch of 40 with evidence on every one runs to hundreds of kilobytes.",
+      inputSchema: {
+        checks: z.array(ConnectionCheckSchema).min(1).max(50).describe("Structured connection assertions to verify against the active schematic."),
+        evidence: z
+          .enum(["failing", "none", "all"])
+          .default("failing")
+          .describe("Which checks keep their evidence block. 'failing' is almost always what you want."),
+        includeRaw: z.boolean().default(false),
+        allPages: z.boolean().default(true),
+        maxHops: z.number().int().positive().max(20).default(4),
+        timeoutMs: DefaultTimeoutSchema.default(30_000)
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
     },
-    summary: "Verified EasyEDA Pro schematic connections."
-  });
+    async ({ checks, evidence, includeRaw, allPages, maxHops, timeoutMs }) => {
+      try {
+        const result = (await bridge.call(
+          "verifyConnections",
+          { checks, includeRaw, allPages, maxHops },
+          timeoutMs
+        )) as { checks?: Array<Record<string, unknown>>; summary?: Record<string, number> };
+
+        const trimmed = (result?.checks ?? []).map((check) => {
+          const keep =
+            evidence === "all" || (evidence === "failing" && check.status !== "pass");
+          return keep ? check : { ...check, evidence: undefined };
+        });
+
+        const summary = result?.summary ?? {};
+        const failed = Number(summary.failed ?? 0) + Number(summary.unknown ?? 0);
+        const headline = failed
+          ? `${summary.passed ?? 0} passed, ${failed} not passing.`
+          : `All ${summary.passed ?? trimmed.length} checks passed.`;
+
+        return ok(headline, { result: { ...result, checks: trimmed } });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
 
   registerReadTool(server, bridge, {
     name: "easyeda_navigate_component",
@@ -673,6 +709,68 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     },
     summary: "Listed EasyEDA Pro schematics."
   });
+
+  server.registerTool(
+    "easyeda_import_schematic",
+    {
+      title: "Import a schematic file into EasyEDA Pro",
+      description:
+        "Imports an EasyEDA Standard JSON sheet (the format the generators emit) into the open project, removing the last manual step from the ingest loop. fileType 'EasyEDA' is the Standard edition format; 'EasyEDA Pro' is the Pro project format. Verify the result afterwards -- an import that lands can still produce symbols without pins.",
+      inputSchema: {
+        filePath: z.string().min(1).describe("Local path to the sheet JSON to import."),
+        fileType: z
+          .enum(["EasyEDA", "EasyEDA Pro", "JLCEDA", "JLCEDA Pro", "KiCad", "EAGLE", "OrCAD", "Allegro", "PADS", "LTspice"])
+          .default("EasyEDA")
+          .describe("Source format. The generators emit EasyEDA Standard, which is 'EasyEDA'."),
+        intoCurrentProject: z
+          .boolean()
+          .default(true)
+          .describe("Import into the open project rather than creating a new one."),
+        confirmation: z
+          .string()
+          .describe("Must explicitly confirm, e.g. 'confirmed: import sheet 2'."),
+        props: z.record(z.string(), z.unknown()).optional().describe("Import-window options, passed through untouched."),
+        timeoutMs: DefaultTimeoutSchema.default(120_000)
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      }
+    },
+    async ({ filePath, fileType, intoCurrentProject, confirmation, props, timeoutMs }) => {
+      try {
+        if (!hasExplicitMutationConfirmation(confirmation)) {
+          return fail(new Error('Refused to import. The confirmation text must explicitly confirm, e.g. "confirmed: import sheet 2".'));
+        }
+        const content = await readSourceFile(filePath);
+        const status = bridge.getStatus() as { documentInfo?: { parentProjectUuid?: string } };
+        const projectUuid = status?.documentInfo?.parentProjectUuid;
+
+        const saveTo = intoCurrentProject && projectUuid
+          ? { operation: "Existing Project", projectUuid }
+          : undefined;
+
+        const result = (await bridge.call(
+          "importProject",
+          { content, fileName: filePath.split("/").pop(), fileType, props, saveTo },
+          timeoutMs
+        )) as { schematicsBefore?: number; schematicsAfter?: number };
+
+        const before = result?.schematicsBefore;
+        const after = result?.schematicsAfter;
+        const moved =
+          typeof before === "number" && typeof after === "number"
+            ? ` Schematics went from ${before} to ${after}.`
+            : " Could not confirm a new schematic appeared -- list them to check.";
+
+        return ok(`Imported ${filePath} as ${fileType}.${moved}`, { result });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
 
   server.registerTool(
     "easyeda_delete_schematic",

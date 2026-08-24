@@ -237,6 +237,79 @@ describe("mutation confirmation guard", () => {
   });
 });
 
+describe("verify_connections evidence trimming", () => {
+  function bridgeWith(call: ReturnType<typeof vi.fn>) {
+    return {
+      endpoint: "ws://127.0.0.1:8765",
+      getStatus: () => ({ connected: true, updatedAt: new Date().toISOString() }),
+      call
+    };
+  }
+
+  const RESULT = {
+    checks: [
+      { id: "a", status: "pass", evidence: { matchedPins: ["lots", "of", "detail"] } },
+      { id: "b", status: "fail", evidence: { reason: "why it failed" } }
+    ],
+    summary: { passed: 1, failed: 1, unknown: 0 }
+  };
+
+  it("keeps evidence on failures and drops it from passes", async () => {
+    // A 40-check batch with evidence on every entry ran to 200KB, which is the
+    // whole reason this default exists.
+    const client = await makeClient(bridgeWith(vi.fn(async () => RESULT)));
+    const result = await client.callTool({
+      name: "easyeda_verify_connections",
+      arguments: { checks: [{ type: "pin_connected", component: "R1" }] }
+    });
+
+    const checks = (result.structuredContent as any).result.checks;
+    expect(checks[0].evidence).toBeUndefined();
+    expect(checks[1].evidence).toEqual({ reason: "why it failed" });
+  });
+
+  it("keeps everything when asked", async () => {
+    const client = await makeClient(bridgeWith(vi.fn(async () => RESULT)));
+    const result = await client.callTool({
+      name: "easyeda_verify_connections",
+      arguments: { checks: [{ type: "pin_connected", component: "R1" }], evidence: "all" }
+    });
+
+    const checks = (result.structuredContent as any).result.checks;
+    expect(checks[0].evidence).toBeDefined();
+  });
+
+  it("drops all evidence when asked", async () => {
+    const client = await makeClient(bridgeWith(vi.fn(async () => RESULT)));
+    const result = await client.callTool({
+      name: "easyeda_verify_connections",
+      arguments: { checks: [{ type: "pin_connected", component: "R1" }], evidence: "none" }
+    });
+
+    const checks = (result.structuredContent as any).result.checks;
+    expect(checks[1].evidence).toBeUndefined();
+  });
+});
+
+describe("import schematic", () => {
+  it("refuses to import without an explicit confirmation", async () => {
+    const call = vi.fn();
+    const client = await makeClient({
+      endpoint: "ws://127.0.0.1:8765",
+      getStatus: () => ({ connected: true, updatedAt: new Date().toISOString() }),
+      call
+    });
+
+    const result = await client.callTool({
+      name: "easyeda_import_schematic",
+      arguments: { filePath: "/tmp/sheet.json", confirmation: "sure" }
+    });
+
+    expect(result.isError).toBe(true);
+    expect(call).not.toHaveBeenCalled();
+  });
+});
+
 describe("delete schematic", () => {
   function bridgeWith(call: ReturnType<typeof vi.fn>) {
     return {

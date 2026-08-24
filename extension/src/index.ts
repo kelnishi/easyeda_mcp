@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.2.4";
+const EXTENSION_VERSION = "0.2.5";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -104,6 +104,7 @@ const handlers: Record<string, (params: Record<string, any>) => Promise<unknown>
   schematicCheck,
   listSchematics,
   deleteSchematic,
+  importProject,
   confirmedAction
 };
 
@@ -719,6 +720,50 @@ async function exportPdf(params: Record<string, any>): Promise<Record<string, un
  * an empty schematic behind. Listing exists so the caller can confirm which
  * uuid is which before destroying either.
  */
+/**
+ * The last manual step in the ingest loop. sys_FileManager.importProjectByProjectFile
+ * takes the same EasyEDA Standard JSON the generators already emit -- fileType
+ * "EasyEDA" is the Standard edition format, not Pro's own.
+ *
+ * The API wants a File, which only exists inside the editor's browser context,
+ * so the caller sends text over the bridge and it is wrapped here.
+ */
+async function importProject(params: Record<string, any>): Promise<Record<string, unknown>> {
+  ensureApi("sys_FileManager", "importProjectByProjectFile");
+  const content = params.content;
+  if (typeof content !== "string" || !content.trim()) {
+    throw apiError("missing_content", "importProject requires the file content as a string.");
+  }
+  if (typeof File === "undefined") {
+    throw apiError("no_file_api", "File is unavailable in this context, so the import cannot be constructed.");
+  }
+
+  const fileName = params.fileName ?? `import-${timestamp()}.json`;
+  const fileType = params.fileType ?? "EasyEDA";
+  const file = new File([content], fileName, { type: "application/json" });
+
+  const before = await optionalCall(() => eda.dmt_Schematic?.getAllSchematicsInfo());
+  const result = await eda.sys_FileManager.importProjectByProjectFile(
+    file,
+    fileType,
+    params.props,
+    params.saveTo,
+    params.librariesImportSetting
+  );
+  const after = await optionalCall(() => eda.dmt_Schematic?.getAllSchematicsInfo());
+
+  const count = (value: unknown) => (Array.isArray(value) ? value.length : undefined);
+  return {
+    fileName,
+    fileType,
+    byteLength: content.length,
+    result: sanitize(result),
+    schematicsBefore: count(before),
+    schematicsAfter: count(after),
+    betaApi: true
+  };
+}
+
 async function listSchematics(): Promise<Record<string, unknown>> {
   ensureApi("dmt_Schematic", "getAllSchematicsInfo");
   const schematics = await eda.dmt_Schematic.getAllSchematicsInfo();
@@ -947,7 +992,8 @@ function detectCapabilities(): Record<string, boolean> {
     documentSourceWrite: Boolean(eda.sys_FileManager?.setDocumentSource),
     netlist: Boolean(eda.sch_Netlist?.getNetlist || eda.sch_ManufactureData?.getNetlistFile),
     schematicCheck: Boolean(eda.sch_Drc?.check),
-    schematicDelete: Boolean(eda.dmt_Schematic?.deleteSchematic)
+    schematicDelete: Boolean(eda.dmt_Schematic?.deleteSchematic),
+    projectImport: Boolean(eda.sys_FileManager?.importProjectByProjectFile)
   };
 }
 
