@@ -237,6 +237,71 @@ describe("mutation confirmation guard", () => {
   });
 });
 
+describe("symbol source tools", () => {
+  const SYMBOL = '{"type":"PIN","ticket":1,"id":"e0"}||{"pinNumber":"1"}|';
+
+  function bridgeWith(call: ReturnType<typeof vi.fn>) {
+    return {
+      endpoint: "ws://127.0.0.1:8765",
+      getStatus: () => ({ connected: true, updatedAt: new Date().toISOString() }),
+      call
+    };
+  }
+
+  it("reports the PIN count, which is the reason to read a symbol at all", async () => {
+    const client = await makeClient(bridgeWith(vi.fn(async () => ({ source: SYMBOL }))));
+    const result = await client.callTool({
+      name: "easyeda_get_symbol_source",
+      arguments: { symbolUuid: "94eb853d90cef179" }
+    });
+
+    expect((result.structuredContent as any).recordTypes).toEqual({ PIN: 1 });
+    expect(result.content?.[0]?.text).toContain("1 PIN record");
+  });
+
+  it("refuses to write a symbol without an explicit confirmation", async () => {
+    const call = vi.fn();
+    const client = await makeClient(bridgeWith(call));
+    const result = await client.callTool({
+      name: "easyeda_set_symbol_source",
+      arguments: { symbolUuid: "abc", source: SYMBOL, confirmation: "ok go" }
+    });
+
+    expect(result.isError).toBe(true);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("backs the symbol up before replacing it", async () => {
+    const call = vi.fn(async (method: string) =>
+      method === "getSymbolSource" ? { source: "OLD SYMBOL" } : { applied: true }
+    );
+    const client = await makeClient(bridgeWith(call as never));
+    const result = await client.callTool({
+      name: "easyeda_set_symbol_source",
+      arguments: { symbolUuid: "abc", source: SYMBOL, confirmation: "confirmed: add pins" }
+    });
+
+    const structured = result.structuredContent as any;
+    expect(structured.applied).toBe(true);
+    expect(await readFile(structured.backupPath, "utf8")).toBe("OLD SYMBOL");
+    expect(call.mock.calls.map((c) => c[0])).toEqual(["getSymbolSource", "updateSymbolSource"]);
+  });
+
+  it("surfaces a rejected symbol write as applied:false", async () => {
+    const call = vi.fn(async (method: string) =>
+      method === "getSymbolSource" ? { source: "OLD" } : { applied: false, reason: "bad symbol" }
+    );
+    const client = await makeClient(bridgeWith(call as never));
+    const result = await client.callTool({
+      name: "easyeda_set_symbol_source",
+      arguments: { symbolUuid: "abc", source: SYMBOL, confirmation: "confirmed: add pins", skipBackup: true }
+    });
+
+    expect((result.structuredContent as any).applied).toBe(false);
+    expect((result.structuredContent as any).reason).toBe("bad symbol");
+  });
+});
+
 describe("verify_connections evidence trimming", () => {
   function bridgeWith(call: ReturnType<typeof vi.fn>) {
     return {

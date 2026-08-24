@@ -27,6 +27,8 @@ Use this page when you know what you want to do and need the right MCP tool.
 | List schematics and sheets | `easyeda_list_schematics` |
 | Delete a schematic or sheet | `easyeda_delete_schematic` |
 | Find a real part (LCSC) | `easyeda_find_library_device` |
+| Read a symbol (where pins live) | `easyeda_get_symbol_source` |
+| Fix a symbol's pins | `easyeda_set_symbol_source` |
 | Check connectivity against intent | `easyeda_get_netlist` |
 | Run the schematic rule check | `easyeda_schematic_check` |
 
@@ -248,6 +250,35 @@ source to a file first if it may be wanted again.
 
 Looks up devices by LCSC id, uuid, or keyword. A device is what carries a
 footprint, and the netlist export stays refused until components have them.
+
+## Library Symbols
+
+A schematic page references symbols; the pins are in the symbol. These two reach
+that second document, which is why a broken pin no longer means re-importing the
+whole sheet.
+
+### `easyeda_get_symbol_source`
+
+Reads one symbol and reports its record histogram. `PIN` count is the number
+worth looking at: a symbol that imported as a bare rectangle has `RECT` and
+`ATTR` records and no `PIN` at all.
+
+Find `symbolUuid` from `easyeda_get_component_pins` with `includeRaw: true`,
+under the component's `symbol.uuid`. `libraryUuid` is usually empty for a
+project-local symbol.
+
+Reading opens the symbol in the editor, which moves the view off whatever was
+active; the tab is closed again afterwards unless `keepOpen` is set.
+
+### `easyeda_set_symbol_source`
+
+Writes a symbol back. **Every placed instance changes at once** — that is the
+point when correcting pins, and a hazard when the symbol is shared.
+
+Backs up first, and reports refusal through `applied` rather than raising. Read
+back afterwards: as with the document write, an accepted write is not proof the
+symbol matches what was sent. If a write is refused, retry with `openFirst`,
+which follows EasyEDA's documented order.
 
 ## Verification
 

@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.2.6";
+const EXTENSION_VERSION = "0.2.7";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -106,6 +106,8 @@ const handlers: Record<string, (params: Record<string, any>) => Promise<unknown>
   deleteSchematic,
   importProject,
   findLibraryDevice,
+  getSymbolSource,
+  updateSymbolSource,
   confirmedAction
 };
 
@@ -738,6 +740,79 @@ async function exportPdf(params: Record<string, any>): Promise<Record<string, un
  * when the BOM already names the part, by uuid when a component references one,
  * and by keyword when neither is known yet.
  */
+/**
+ * A symbol's source is where PIN records live, so this is the only way to change
+ * a pin without re-importing the whole sheet. Reading one requires opening it,
+ * which moves the editor off whatever the user was looking at -- so the tab is
+ * closed again unless the caller asks to keep it.
+ */
+async function getSymbolSource(params: Record<string, any>): Promise<Record<string, unknown>> {
+  ensureApi("lib_Symbol", "openInEditor");
+  ensureApi("sys_FileManager", "getDocumentSource");
+  const symbolUuid = requireUuid(params.symbolUuid, "getSymbolSource");
+  const libraryUuid = typeof params.libraryUuid === "string" ? params.libraryUuid : "";
+
+  const tabId = await eda.lib_Symbol.openInEditor(symbolUuid, libraryUuid);
+  try {
+    const source = await eda.sys_FileManager.getDocumentSource();
+    if (typeof source !== "string") {
+      throw apiError("unexpected_source", `getDocumentSource returned ${typeof source} for symbol ${symbolUuid}.`);
+    }
+    return { symbolUuid, libraryUuid, tabId, source, byteLength: source.length, betaApi: true };
+  } finally {
+    if (!params.keepOpen && tabId) {
+      await optionalCall(() =>
+        eda.dmt_EditorControl?.closeDocument ? eda.dmt_EditorControl.closeDocument(tabId) : undefined
+      );
+    }
+  }
+}
+
+/**
+ * Writes a symbol back to the library. Like setDocumentSource this reports
+ * refusal by returning false rather than raising, so `applied` is the field that
+ * says whether it landed.
+ */
+async function updateSymbolSource(params: Record<string, any>): Promise<Record<string, unknown>> {
+  ensureApi("lib_Symbol", "updateDocumentSource");
+  const symbolUuid = requireUuid(params.symbolUuid, "updateSymbolSource");
+  const libraryUuid = typeof params.libraryUuid === "string" ? params.libraryUuid : "";
+  const source = params.source;
+  if (typeof source !== "string" || !source.trim()) {
+    throw apiError("missing_source", "updateSymbolSource requires a non-empty source string.");
+  }
+
+  let tabId: string | undefined;
+  if (params.openFirst) {
+    tabId = await optionalCall(() => eda.lib_Symbol.openInEditor(symbolUuid, libraryUuid));
+  }
+
+  try {
+    const applied = await eda.lib_Symbol.updateDocumentSource(symbolUuid, libraryUuid, source);
+    return {
+      symbolUuid,
+      libraryUuid,
+      applied: applied === true,
+      byteLength: source.length,
+      reason: applied === true ? undefined : "EasyEDA rejected the symbol source; the symbol is unchanged.",
+      betaApi: true
+    };
+  } finally {
+    if (params.openFirst && !params.keepOpen && tabId) {
+      await optionalCall(() =>
+        eda.dmt_EditorControl?.closeDocument ? eda.dmt_EditorControl.closeDocument(tabId) : undefined
+      );
+    }
+  }
+}
+
+function requireUuid(value: unknown, caller: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw apiError("missing_uuid", `${caller} requires a symbolUuid.`);
+  }
+  return value;
+}
+
 async function findLibraryDevice(params: Record<string, any>): Promise<Record<string, unknown>> {
   const libraryUuid = params.libraryUuid;
 
@@ -1031,7 +1106,9 @@ function detectCapabilities(): Record<string, boolean> {
     schematicCheck: Boolean(eda.sch_Drc?.check),
     schematicDelete: Boolean(eda.dmt_Schematic?.deleteSchematic),
     projectImport: Boolean(eda.sys_FileManager?.importProjectByProjectFile),
-    librarySearch: Boolean(eda.lib_Device?.search || eda.lib_Device?.getByLcscIds)
+    librarySearch: Boolean(eda.lib_Device?.search || eda.lib_Device?.getByLcscIds),
+    symbolSourceRead: Boolean(eda.lib_Symbol?.openInEditor),
+    symbolSourceWrite: Boolean(eda.lib_Symbol?.updateDocumentSource)
   };
 }
 

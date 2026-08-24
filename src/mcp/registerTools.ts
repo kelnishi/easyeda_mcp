@@ -710,6 +710,130 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     summary: "Listed EasyEDA Pro schematics."
   });
 
+  server.registerTool(
+    "easyeda_get_symbol_source",
+    {
+      title: "Read a library symbol's source",
+      description:
+        "Reads a library symbol's native source and saves it to a local file. This is where PIN records live -- a schematic page holds only references -- so it is the only view that shows whether a symbol actually has pins. Find the symbolUuid from easyeda_get_component_pins with includeRaw, under the component's symbol.uuid; libraryUuid is often empty for a project-local symbol. Reading opens the symbol in the editor and closes it again unless keepOpen is set.",
+      inputSchema: {
+        symbolUuid: z.string().min(1),
+        libraryUuid: z.string().default("").describe("Empty for project-local symbols."),
+        outPath: z.string().min(1).optional(),
+        headLineCount: z.number().int().min(0).max(200).default(20),
+        keepOpen: z.boolean().default(false).describe("Leave the symbol open in the editor afterwards."),
+        timeoutMs: DefaultTimeoutSchema.default(30_000)
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async ({ symbolUuid, libraryUuid, outPath, headLineCount, keepOpen, timeoutMs }) => {
+      try {
+        const result = (await bridge.call(
+          "getSymbolSource",
+          { symbolUuid, libraryUuid, keepOpen },
+          timeoutMs
+        )) as { source?: string; tabId?: string };
+        const source = result?.source ?? "";
+        const path = await writeSourceFile(
+          outPath ?? defaultSourcePath("snapshot", `symbol-${symbolUuid}-${fileStamp(new Date())}`),
+          source
+        );
+        const summary = summarizeSource(source);
+        const pins = summary.recordTypes.PIN ?? 0;
+        return ok(
+          `Read symbol ${symbolUuid} (${summary.byteLength} bytes, ${pins} PIN record(s)) to ${path}.`,
+          { path, symbolUuid, libraryUuid, ...summary, head: headLineCount ? headLines(source, headLineCount) : undefined }
+        );
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "easyeda_set_symbol_source",
+    {
+      title: "Replace a library symbol's source",
+      description:
+        "Replaces a library symbol, which is how a pin is added or corrected without re-importing the sheet. Backs the symbol up first. Like the document write, EasyEDA reports refusal by returning false, so check `applied` -- and read back afterwards, since an accepted write is not proof the symbol matches what was sent. Every placed instance of the symbol changes at once.",
+      inputSchema: {
+        symbolUuid: z.string().min(1),
+        libraryUuid: z.string().default(""),
+        filePath: z.string().min(1).optional().describe("Local file holding the new symbol source."),
+        source: z.string().min(1).optional().describe("Inline source. Prefer filePath."),
+        confirmation: z.string().describe("Must explicitly confirm, e.g. 'confirmed: add pins to the Q3 symbol'."),
+        backupPath: z.string().min(1).optional(),
+        skipBackup: z.boolean().default(false),
+        openFirst: z
+          .boolean()
+          .default(false)
+          .describe("Open the symbol before writing. Try this if a write is refused; the documented flow opens first."),
+        timeoutMs: DefaultTimeoutSchema.default(60_000)
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false
+      }
+    },
+    async ({ symbolUuid, libraryUuid, filePath, source, confirmation, backupPath, skipBackup, openFirst, timeoutMs }) => {
+      try {
+        if (!hasExplicitMutationConfirmation(confirmation)) {
+          return fail(new Error(`Refused to replace symbol ${symbolUuid}. The confirmation text must explicitly confirm.`));
+        }
+        if (!filePath && !source) {
+          return fail(new Error("Provide either filePath or source."));
+        }
+        if (filePath && source) {
+          return fail(new Error("Provide filePath or source, not both."));
+        }
+        const nextSource = source ?? (await readSourceFile(filePath as string));
+
+        let savedBackupPath: string | undefined;
+        if (!skipBackup) {
+          const current = (await bridge.call(
+            "getSymbolSource",
+            { symbolUuid, libraryUuid },
+            timeoutMs
+          )) as { source?: string };
+          savedBackupPath = await writeSourceFile(
+            backupPath ?? defaultSourcePath("backup", `symbol-${symbolUuid}-${fileStamp(new Date())}`),
+            current?.source ?? ""
+          );
+        }
+
+        const result = (await bridge.call(
+          "updateSymbolSource",
+          { symbolUuid, libraryUuid, source: nextSource, openFirst },
+          timeoutMs
+        )) as { applied?: boolean; reason?: string };
+
+        const backupNote = savedBackupPath ? ` Backup at ${savedBackupPath}.` : "";
+        if (!result?.applied) {
+          return ok(`EasyEDA rejected the symbol source; symbol ${symbolUuid} is unchanged.${backupNote}`, {
+            applied: false,
+            reason: result?.reason ?? "EasyEDA returned false.",
+            backupPath: savedBackupPath,
+            ...summarizeSource(nextSource)
+          });
+        }
+        return ok(`Replaced symbol ${symbolUuid}.${backupNote} Read it back to confirm the records you changed.`, {
+          applied: true,
+          backupPath: savedBackupPath,
+          ...summarizeSource(nextSource)
+        });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
   registerReadTool(server, bridge, {
     name: "easyeda_find_library_device",
     title: "Find an EasyEDA/LCSC library device",
