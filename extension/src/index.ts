@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.2.5";
+const EXTENSION_VERSION = "0.2.6";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -105,6 +105,7 @@ const handlers: Record<string, (params: Record<string, any>) => Promise<unknown>
   listSchematics,
   deleteSchematic,
   importProject,
+  findLibraryDevice,
   confirmedAction
 };
 
@@ -728,6 +729,42 @@ async function exportPdf(params: Record<string, any>): Promise<Record<string, un
  * The API wants a File, which only exists inside the editor's browser context,
  * so the caller sends text over the bridge and it is wrapped here.
  */
+/**
+ * Finding real parts is what turns a sheet of generic boxes into one that can
+ * produce a netlist: EasyEDA refuses the netlist export until components carry
+ * footprints, and only a library device brings one.
+ *
+ * Three lookups, because the useful question differs by situation: by LCSC id
+ * when the BOM already names the part, by uuid when a component references one,
+ * and by keyword when neither is known yet.
+ */
+async function findLibraryDevice(params: Record<string, any>): Promise<Record<string, unknown>> {
+  const libraryUuid = params.libraryUuid;
+
+  if (Array.isArray(params.lcscIds) && params.lcscIds.length) {
+    ensureApi("lib_Device", "getByLcscIds");
+    const devices = await eda.lib_Device.getByLcscIds(params.lcscIds, libraryUuid, false);
+    return { mode: "lcscIds", devices: sanitize(devices), betaApi: true };
+  }
+
+  if (typeof params.uuid === "string" && params.uuid) {
+    ensureApi("lib_Device", "get");
+    const device = await eda.lib_Device.get(params.uuid, libraryUuid);
+    return { mode: "uuid", devices: sanitize(device ? [device] : []), betaApi: true };
+  }
+
+  ensureApi("lib_Device", "search");
+  const devices = await eda.lib_Device.search(
+    params.query,
+    libraryUuid,
+    params.classification,
+    params.symbolType,
+    params.limit ?? 20,
+    params.page ?? 1
+  );
+  return { mode: "search", devices: sanitize(devices), betaApi: true };
+}
+
 async function importProject(params: Record<string, any>): Promise<Record<string, unknown>> {
   ensureApi("sys_FileManager", "importProjectByProjectFile");
   const content = params.content;
@@ -993,7 +1030,8 @@ function detectCapabilities(): Record<string, boolean> {
     netlist: Boolean(eda.sch_Netlist?.getNetlist || eda.sch_ManufactureData?.getNetlistFile),
     schematicCheck: Boolean(eda.sch_Drc?.check),
     schematicDelete: Boolean(eda.dmt_Schematic?.deleteSchematic),
-    projectImport: Boolean(eda.sys_FileManager?.importProjectByProjectFile)
+    projectImport: Boolean(eda.sys_FileManager?.importProjectByProjectFile),
+    librarySearch: Boolean(eda.lib_Device?.search || eda.lib_Device?.getByLcscIds)
   };
 }
 

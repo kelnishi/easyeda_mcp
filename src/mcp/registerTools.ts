@@ -710,6 +710,25 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     summary: "Listed EasyEDA Pro schematics."
   });
 
+  registerReadTool(server, bridge, {
+    name: "easyeda_find_library_device",
+    title: "Find an EasyEDA/LCSC library device",
+    description:
+      "Looks up library devices by LCSC id, by uuid, or by keyword. A device is what carries a footprint, and EasyEDA refuses to export a netlist until components have footprints -- so this is the step that turns a sheet of generic boxes into a verifiable one.",
+    method: "findLibraryDevice",
+    inputSchema: {
+      query: z.string().min(1).optional().describe("Keyword search, e.g. 'AP63205' or 'AO3400'."),
+      lcscIds: z.array(z.string().min(1)).optional().describe("Exact LCSC ids, e.g. ['C7420417']. Preferred when the BOM names the part."),
+      uuid: z.string().min(1).optional().describe("Device uuid, e.g. from a component's Device attribute."),
+      libraryUuid: z.string().min(1).optional(),
+      classification: z.string().min(1).optional(),
+      limit: z.number().int().positive().max(100).default(20),
+      page: z.number().int().positive().default(1),
+      timeoutMs: DefaultTimeoutSchema.default(30_000)
+    },
+    summary: "Searched the EasyEDA device library."
+  });
+
   server.registerTool(
     "easyeda_import_schematic",
     {

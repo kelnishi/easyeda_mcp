@@ -23,6 +23,10 @@ Use this page when you know what you want to do and need the right MCP tool.
 | Save/import/autoroute/autolayout | `easyeda_confirmed_action` |
 | Read the document's own source | `easyeda_get_document_source` |
 | Replace the document's source | `easyeda_set_document_source` |
+| Import a generated sheet | `easyeda_import_schematic` |
+| List schematics and sheets | `easyeda_list_schematics` |
+| Delete a schematic or sheet | `easyeda_delete_schematic` |
+| Find a real part (LCSC) | `easyeda_find_library_device` |
 | Check connectivity against intent | `easyeda_get_netlist` |
 | Run the schematic rule check | `easyeda_schematic_check` |
 
@@ -213,6 +217,37 @@ Exports Gerber fabrication data from the active PCB.
 ### `easyeda_export_pdf`
 
 Exports a PDF from the active schematic or PCB document.
+
+## Project Lifecycle
+
+The ingest loop — generate, import, verify, replace — runs end to end through
+these without leaving the tool.
+
+### `easyeda_import_schematic`
+
+Imports a sheet file into the open project. `fileType: "EasyEDA"` is the
+**Standard** edition JSON the generators emit; `"EasyEDA Pro"` is Pro's own
+project format. The result reports the schematic count either side, because an
+import that resolves is not evidence that a schematic appeared.
+
+Verify afterwards. An import can land and still produce symbols without pins —
+see [Document Model](/document-model) for how to tell.
+
+### `easyeda_list_schematics`
+
+Schematics and sheets with their uuids. Each import lands as its own schematic
+holding one page, so this is how an obsolete import is told from the current one.
+
+### `easyeda_delete_schematic`
+
+Deletes by explicit uuid; there is deliberately no "current document" form,
+since the active document is whatever was last clicked. Irreversible — read the
+source to a file first if it may be wanted again.
+
+### `easyeda_find_library_device`
+
+Looks up devices by LCSC id, uuid, or keyword. A device is what carries a
+footprint, and the netlist export stays refused until components have them.
 
 ## Verification
 
