@@ -425,7 +425,7 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     {
       title: "Read EasyEDA Pro document source",
       description:
-        "Reads the active document's native EasyEDA Pro source (JSON-lines primitive records) and saves it to a local file. Returns a record-type histogram and the first lines rather than the whole document, so large sheets stay readable.",
+        "Reads the active document's native EasyEDA Pro source (JSON-lines primitive records) and saves it to a local file. Returns a record-type histogram and the first lines rather than the whole document, so large sheets stay readable. The histogram is the reliable way to tell whether symbols carry pins: a page holds COMPONENT references and ATTR key=NET labels, while PIN records live only in library symbol documents, and every pin-level tool returns [] both for a document without pins and for one it cannot read.",
       inputSchema: {
         outPath: z
           .string()
@@ -473,7 +473,7 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     {
       title: "Replace EasyEDA Pro document source",
       description:
-        "Replaces the active document's entire source. Takes a backup of the current source first. EasyEDA reports malformed input by refusing the write, so check `applied` rather than assuming success.",
+        "Replaces the active document's entire source. Takes a backup of the current source first. EasyEDA reports malformed input by refusing the write, so check `applied` rather than assuming success. Writes the ACTIVE document only: a schematic page references symbols by uuid, so this can move, rewire and relabel but cannot add a pin -- that needs lib_Symbol.updateDocumentSource on the library symbol. The editor also materializes derived attributes on write (a Symbol attr per component, a Relevance attr per wire), so the source read back will not match what was sent byte-for-byte; it converges after one write. Compare record counts, not bytes.",
       inputSchema: {
         filePath: z.string().min(1).optional().describe("Local file holding the new document source."),
         source: z.string().min(1).optional().describe("Inline source. Prefer filePath for anything sizeable."),

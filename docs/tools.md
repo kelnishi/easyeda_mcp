@@ -214,6 +214,9 @@ Exports a PDF from the active schematic or PCB document.
 
 ## Document Source
 
+See [Document Model](/document-model) for what a page holds versus what a
+library symbol holds, and why that decides whether an edit is possible here.
+
 EasyEDA Pro serializes a document as JSON-lines primitive records -- one per
 `DOCHEAD`, `CANVAS`, `PART`, `RECT`, `PIN`, `WIRE`, `COMPONENT`. These two tools
 read and replace that source directly, which is the only whole-document write
