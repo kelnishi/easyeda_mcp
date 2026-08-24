@@ -3,6 +3,7 @@ import type { EasyEdaBridge } from "../bridge/EasyEdaBridge.js";
 import { ok, fail } from "./toolResult.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PROTOCOL_VERSION, type EditorStatus } from "../protocol/messages.js";
+import { diffNetlist, parseProtel2Netlist, summarizeNetlist } from "./netlist.js";
 import {
   defaultSourcePath,
   fileStamp,
@@ -542,6 +543,119 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
           backupPath: savedBackupPath,
           ...summarizeSource(nextSource)
         });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "easyeda_get_netlist",
+    {
+      title: "Read the EasyEDA Pro netlist",
+      description:
+        "Exports the schematic netlist from EasyEDA's own netlister and parses it into nets and pins. This is the authoritative connectivity answer -- unlike the pin and trace tools, it is not inferred from geometry. Optionally diffs the result against an expected net map so a wiring mistake is reported rather than merely displayed.",
+      inputSchema: {
+        netlistType: z
+          .enum(["Protel2", "EasyEDA", "JLCEDA", "PADS", "Allegro", "DISA", "DSNET"])
+          .default("Protel2")
+          .describe("ESYS_NetlistType. Protel2 is the format this tool can parse."),
+        expected: z
+          .record(z.string(), z.array(z.string()))
+          .optional()
+          .describe('Intended net map, e.g. {"GND": ["R1-2", "U1-4"]}. Pin order is ignored.'),
+        outPath: z.string().min(1).optional().describe("Where to save the raw netlist text."),
+        includeNets: z
+          .boolean()
+          .default(false)
+          .describe("Return every net and its pins. Leave false on a large sheet; the summary and diff usually suffice."),
+        timeoutMs: DefaultTimeoutSchema.default(60_000)
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async ({ netlistType, expected, outPath, includeNets, timeoutMs }) => {
+      try {
+        const result = (await bridge.call("getNetlist", { netlistType }, timeoutMs)) as {
+          netlist?: string;
+          source?: string;
+        };
+        const text = result?.netlist ?? "";
+        const path = await writeSourceFile(
+          outPath ?? defaultSourcePath("snapshot", `netlist-${fileStamp(new Date())}`),
+          text
+        );
+
+        const parsed = netlistType === "Protel2" ? parseProtel2Netlist(text) : { nets: [], components: [], parsed: false };
+        if (!parsed.parsed) {
+          return ok(`Exported the netlist to ${path}, but could not parse it as ${netlistType}.`, {
+            path,
+            netlistType,
+            source: result?.source,
+            parsed: false,
+            hint: "Only Protel2 is parsed. The raw text is saved at the path above."
+          });
+        }
+
+        const summary = summarizeNetlist(parsed);
+        const diff = expected ? diffNetlist(parsed, expected) : undefined;
+        const headline = diff
+          ? diff.ok
+            ? `Netlist matches all ${Object.keys(expected ?? {}).length} expected nets.`
+            : `Netlist differs from intent: ${diff.missingNets.length} missing, ${diff.pinMismatches.length} with wrong pins.`
+          : `Netlist has ${summary.netCount} nets over ${summary.componentCount} components.`;
+
+        return ok(headline, {
+          path,
+          netlistType,
+          source: result?.source,
+          parsed: true,
+          ...summary,
+          diff,
+          nets: includeNets ? parsed.nets : undefined
+        });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "easyeda_schematic_check",
+    {
+      title: "Run the EasyEDA Pro schematic rule check",
+      description:
+        "Runs EasyEDA's native schematic design-rule check (SCH_Drc.check) and returns its violations. Requests verbose detail; EasyEDA sometimes answers with counts only, in which case `detail` says so and per-violation detail is visible in the editor panel.",
+      inputSchema: {
+        strict: z.boolean().default(true).describe("Uniform strict checking."),
+        openPanel: z
+          .boolean()
+          .default(false)
+          .describe("Open the check panel in EasyEDA Pro. Off by default so the tool does not steal focus."),
+        timeoutMs: DefaultTimeoutSchema.default(60_000)
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async ({ strict, openPanel, timeoutMs }) => {
+      try {
+        const result = (await bridge.call("schematicCheck", { strict, openPanel }, timeoutMs)) as {
+          passed?: boolean;
+          violationCount?: number;
+          detail?: string;
+        };
+        const headline = result?.passed
+          ? "Schematic check passed."
+          : `Schematic check reported ${result?.violationCount ?? "some"} violation(s).`;
+        return ok(headline, { result });
       } catch (error) {
         return fail(error);
       }

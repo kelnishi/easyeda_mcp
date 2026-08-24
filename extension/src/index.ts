@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.2.0";
+const EXTENSION_VERSION = "0.2.1";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -100,6 +100,8 @@ const handlers: Record<string, (params: Record<string, any>) => Promise<unknown>
   exportPdf,
   getDocumentSource,
   setDocumentSource,
+  getNetlist,
+  schematicCheck,
   confirmedAction
 };
 
@@ -698,6 +700,81 @@ async function exportPdf(params: Record<string, any>): Promise<Record<string, un
  * extension API offers -- sch_PrimitiveComponent.create() places library
  * devices and cannot build a symbol with custom pins.
  */
+/**
+ * The netlist is EasyEDA's own answer about connectivity, which is worth more
+ * than any geometry the bridge infers: it comes from the netlister the editor
+ * itself uses. Returned as text rather than saved through sys_FileSystem so the
+ * caller can parse it without a save dialog.
+ *
+ * SCH_Netlist.getNetlist is documented obsolete but hands back a plain string,
+ * so it is tried first; the file-based API needs its type argument and returns
+ * nothing useful without one, which is why an earlier netlist export here came
+ * back empty.
+ */
+async function getNetlist(params: Record<string, any>): Promise<Record<string, unknown>> {
+  const type = params.netlistType ?? "Protel2";
+
+  const direct = await optionalCall(() =>
+    eda.sch_Netlist?.getNetlist ? eda.sch_Netlist.getNetlist(type) : undefined
+  );
+  if (typeof direct === "string" && direct.trim()) {
+    return { netlist: direct, netlistType: type, source: "sch_Netlist.getNetlist", betaApi: true };
+  }
+
+  const fileName = params.fileName ?? `easyeda-netlist-${timestamp()}`;
+  const api = pickManufactureApi(params.scope ?? "schematic", "getNetlistFile");
+  const file = await api.getNetlistFile(fileName, type);
+  const text = await fileToText(file);
+  if (!text) {
+    throw apiError(
+      "empty_netlist",
+      `Netlist export returned no text for type "${type}". Try another ESYS_NetlistType (EasyEDA, JLCEDA, Protel2, PADS, Allegro).`
+    );
+  }
+  return { netlist: text, netlistType: type, source: "getNetlistFile", betaApi: true };
+}
+
+async function fileToText(value: unknown): Promise<string | undefined> {
+  const file = extractFile(value);
+  if (typeof file === "string") {
+    return file;
+  }
+  if (file && typeof (file as Blob).text === "function") {
+    return await (file as Blob).text();
+  }
+  return undefined;
+}
+
+/**
+ * SCH_Drc.check answers with a bare boolean unless verbose detail is requested,
+ * and even then may report only aggregate counts per severity. Both shapes are
+ * normalized here so the caller does not have to guess which it received.
+ */
+async function schematicCheck(params: Record<string, any>): Promise<Record<string, unknown>> {
+  ensureApi("sch_Drc", "check");
+  const strict = params.strict !== false;
+  const openPanel = params.openPanel === true;
+  const raw = await eda.sch_Drc.check(strict, openPanel, true);
+
+  if (typeof raw === "boolean") {
+    return { passed: raw, violations: [], detail: "none", strict, betaApi: true };
+  }
+
+  const entries = Array.isArray(raw) ? raw : [raw];
+  const violations = entries
+    .filter((entry) => entry !== undefined && entry !== null)
+    .map((entry) => (typeof entry === "string" ? { description: entry } : sanitize(entry)));
+
+  return {
+    passed: violations.length === 0,
+    violations,
+    violationCount: violations.length,
+    detail: violations.length ? "verbose" : "none",
+    strict,
+    betaApi: true
+  };
+}
+
 async function getDocumentSource(): Promise<Record<string, unknown>> {
   ensureApi("sys_FileManager", "getDocumentSource");
   const source = await eda.sys_FileManager.getDocumentSource();
@@ -787,7 +864,9 @@ function detectCapabilities(): Record<string, boolean> {
     schManufactureData: Boolean(eda.sch_ManufactureData),
     fileSystem: Boolean(eda.sys_FileSystem?.saveFile),
     documentSourceRead: Boolean(eda.sys_FileManager?.getDocumentSource),
-    documentSourceWrite: Boolean(eda.sys_FileManager?.setDocumentSource)
+    documentSourceWrite: Boolean(eda.sys_FileManager?.setDocumentSource),
+    netlist: Boolean(eda.sch_Netlist?.getNetlist || eda.sch_ManufactureData?.getNetlistFile),
+    schematicCheck: Boolean(eda.sch_Drc?.check)
   };
 }
 

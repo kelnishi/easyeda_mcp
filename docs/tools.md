@@ -23,6 +23,8 @@ Use this page when you know what you want to do and need the right MCP tool.
 | Save/import/autoroute/autolayout | `easyeda_confirmed_action` |
 | Read the document's own source | `easyeda_get_document_source` |
 | Replace the document's source | `easyeda_set_document_source` |
+| Check connectivity against intent | `easyeda_get_netlist` |
+| Run the schematic rule check | `easyeda_schematic_check` |
 
 ## Recommended First Flow
 
@@ -211,6 +213,42 @@ Exports Gerber fabrication data from the active PCB.
 ### `easyeda_export_pdf`
 
 Exports a PDF from the active schematic or PCB document.
+
+## Verification
+
+Connectivity reported by the pin and trace tools is inferred from geometry. These
+two tools are not: both come from EasyEDA's own engines, and they are what a
+change should be checked against before it is believed.
+
+### `easyeda_get_netlist`
+
+Exports the schematic netlist and parses it into nets and pins. Pass `expected`
+— a net-to-pins map — to diff the design against its intent:
+
+```json
+{ "expected": { "PACK_NEG": ["U3-P-", "Q3-S"] } }
+```
+
+The diff separates two failures that need different fixes. A **missing net**
+means the label never landed. A **pin mismatch** means it landed on the wrong
+pin. Nets present in the design but absent from `expected` are listed and do not
+fail the diff, since intent is usually partial.
+
+`singleEndedNets` names nets reaching fewer than two pins — a net that connects
+nothing, and the cheapest real defect a netlist exposes.
+
+Only `Protel2` is parsed; other `ESYS_NetlistType` values are saved as raw text
+with `parsed: false`. The type argument is required by EasyEDA — omitting it is
+why an earlier netlist export here returned nothing at all.
+
+### `easyeda_schematic_check`
+
+Runs `SCH_Drc.check` and returns its violations. Verbose detail is requested,
+but EasyEDA sometimes answers with counts only; `detail` reports which was
+received, and `"none"` with `passed: false` means the per-violation list is
+visible only in the editor panel.
+
+`openPanel` is off by default so a check does not steal focus.
 
 ## Document Source
 
