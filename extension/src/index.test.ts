@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 
 type WebSocketRegistration = {
   onMessage?: (event: MessageEvent<string>) => Promise<void>;
@@ -311,5 +312,17 @@ describe("EasyEDA extension bridge handlers", () => {
     expect(dialogMessages.at(-1)?.message).toContain("Bridge URI: ws://127.0.0.1:8765");
     expect(dialogMessages.at(-1)?.message).toContain("Connection phase:");
     expect(dialogMessages.at(-1)?.message).toContain("Document: Power Supply.Schematic");
+  });
+});
+
+describe("extension version", () => {
+  it("matches the manifest", async () => {
+    // EXTENSION_VERSION is hardcoded rather than read from extension.json --
+    // the bundle has no loader for it -- so the two drift silently and the
+    // bridge reports a version that is not the one running.
+    const manifest = JSON.parse(await readFile(new URL("../extension.json", import.meta.url), "utf8"));
+    const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+    const declared = /const EXTENSION_VERSION = "([^"]+)"/.exec(source)?.[1];
+    expect(declared).toBe(manifest.version);
   });
 });
