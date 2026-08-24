@@ -54,6 +54,27 @@ It converges. A second write of the normalized source round-trips identically
 except for `DOCHEAD` metadata (client id, timestamp, version). So compare record
 counts across a write, never bytes.
 
+## A write is not applied verbatim
+
+`applied: true` means EasyEDA accepted the write, not that the document now
+matches what was sent. Two behaviours seen on a live sheet:
+
+- **A new `WIRE` group appended after the end of the document rejects the whole
+  write.** Declared inline, among the existing wire records, the same group is
+  accepted.
+- **An in-place coordinate edit to an existing `LINE` is discarded** while every
+  other change in the same write lands. A segment sent at x=1200 read back at
+  x=1140, with no error and `applied: true`. Deletions and newly-created records
+  are honored, so the way to move a wire is to delete its group and create a
+  fresh one with new ids, repointing the net-label `ATTR` through `parentId`.
+
+Always read back and check the specific records you changed.
+
+Moving a component means moving four things: its `COMPONENT` record, every
+`ATTR` whose `parentId` is that component, the stub `WIRE`/`LINE` group at each
+pin, and the net-label `ATTR` at each stub's far end. Miss the stub and the pin
+goes silently unconnected.
+
 ## One client owns the bridge
 
 The MCP server *hosts* the WebSocket on port 8765 rather than connecting to one.
