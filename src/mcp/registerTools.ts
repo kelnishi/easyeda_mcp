@@ -662,6 +662,71 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     }
   );
 
+  registerReadTool(server, bridge, {
+    name: "easyeda_list_schematics",
+    title: "List EasyEDA Pro schematics and pages",
+    description:
+      "Lists the project's schematics and sheets with their uuids. Each import lands as its own schematic holding one page, so this is how you tell an obsolete import from the current one before deleting either.",
+    method: "listSchematics",
+    inputSchema: {
+      timeoutMs: DefaultTimeoutSchema.default(30_000)
+    },
+    summary: "Listed EasyEDA Pro schematics."
+  });
+
+  server.registerTool(
+    "easyeda_delete_schematic",
+    {
+      title: "Delete an EasyEDA Pro schematic or sheet",
+      description:
+        "Permanently deletes a schematic (or one sheet) by uuid. Irreversible: EasyEDA offers no undo across this API, so read the document's source to a file first if it may be wanted again. Deleting a schematic removes its pages; deleting only a page can leave an empty schematic behind.",
+      inputSchema: {
+        uuid: z
+          .string()
+          .min(1)
+          .describe("The schematic or page uuid, from easyeda_list_schematics. Required; there is no 'current document' form."),
+        scope: z
+          .enum(["schematic", "page"])
+          .default("schematic")
+          .describe("'schematic' removes the schematic and its pages; 'page' removes one sheet."),
+        confirmation: z
+          .string()
+          .describe("Must explicitly confirm and name what is being deleted, e.g. 'confirmed: delete the superseded power-module-2s import'."),
+        timeoutMs: DefaultTimeoutSchema.default(30_000)
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false
+      }
+    },
+    async ({ uuid, scope, confirmation, timeoutMs }) => {
+      try {
+        if (!hasExplicitMutationConfirmation(confirmation)) {
+          return fail(
+            new Error(
+              `Refused to delete ${uuid}. The confirmation text must explicitly confirm, e.g. "confirmed: delete the superseded import".`
+            )
+          );
+        }
+        const result = (await bridge.call("deleteSchematic", { uuid, scope }, timeoutMs)) as {
+          schematicsBefore?: number;
+          schematicsAfter?: number;
+        };
+        const before = result?.schematicsBefore;
+        const after = result?.schematicsAfter;
+        const moved =
+          typeof before === "number" && typeof after === "number"
+            ? ` Schematics went from ${before} to ${after}.`
+            : "";
+        return ok(`Deleted ${scope} ${uuid}.${moved}`, { result });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
   server.registerTool(
     "easyeda_confirmed_action",
     {

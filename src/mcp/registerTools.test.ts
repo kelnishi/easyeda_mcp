@@ -237,6 +237,43 @@ describe("mutation confirmation guard", () => {
   });
 });
 
+describe("delete schematic", () => {
+  function bridgeWith(call: ReturnType<typeof vi.fn>) {
+    return {
+      endpoint: "ws://127.0.0.1:8765",
+      getStatus: () => ({ connected: true, updatedAt: new Date().toISOString() }),
+      call
+    };
+  }
+
+  it("refuses to delete without an explicit confirmation", async () => {
+    const call = vi.fn();
+    const client = await makeClient(bridgeWith(call));
+
+    const result = await client.callTool({
+      name: "easyeda_delete_schematic",
+      arguments: { uuid: "240b9c508235f5e1", confirmation: "yes please" }
+    });
+
+    expect(result.isError).toBe(true);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("deletes by uuid and reports the schematic count either side", async () => {
+    const call = vi.fn(async () => ({ scope: "schematic", uuid: "abc", schematicsBefore: 2, schematicsAfter: 1 }));
+    const client = await makeClient(bridgeWith(call));
+
+    const result = await client.callTool({
+      name: "easyeda_delete_schematic",
+      arguments: { uuid: "abc", confirmation: "confirmed: delete the superseded import" }
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(call).toHaveBeenCalledWith("deleteSchematic", { uuid: "abc", scope: "schematic" }, 30_000);
+    expect(result.structuredContent).toMatchObject({ result: { schematicsAfter: 1 } });
+  });
+});
+
 describe("document source tools", () => {
   const SOURCE = '{"type":"PIN","ticket":1,"id":"e0"}||{}|';
 

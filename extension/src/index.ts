@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.2.3";
+const EXTENSION_VERSION = "0.2.4";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -102,6 +102,8 @@ const handlers: Record<string, (params: Record<string, any>) => Promise<unknown>
   setDocumentSource,
   getNetlist,
   schematicCheck,
+  listSchematics,
+  deleteSchematic,
   confirmedAction
 };
 
@@ -711,6 +713,57 @@ async function exportPdf(params: Record<string, any>): Promise<Record<string, un
  * nothing useful without one, which is why an earlier netlist export here came
  * back empty.
  */
+/**
+ * Each import lands as its own schematic holding one page, so removing an
+ * obsolete import means deleting the schematic; deleting only the page leaves
+ * an empty schematic behind. Listing exists so the caller can confirm which
+ * uuid is which before destroying either.
+ */
+async function listSchematics(): Promise<Record<string, unknown>> {
+  ensureApi("dmt_Schematic", "getAllSchematicsInfo");
+  const schematics = await eda.dmt_Schematic.getAllSchematicsInfo();
+  const pages = await optionalCall(() =>
+    eda.dmt_Schematic?.getAllSchematicPagesInfo ? eda.dmt_Schematic.getAllSchematicPagesInfo() : undefined
+  );
+  const documentInfo = await optionalCall(() => eda.dmt_SelectControl.getCurrentDocumentInfo());
+  return {
+    schematics: sanitize(schematics),
+    pages: sanitize(pages),
+    activeDocument: sanitize(documentInfo),
+    betaApi: true
+  };
+}
+
+/**
+ * Deletion is by explicit uuid only. There is no "delete the current document"
+ * form on purpose: the active document is whatever the user last clicked, and
+ * that is the wrong thing to aim an irreversible operation at.
+ */
+async function deleteSchematic(params: Record<string, any>): Promise<Record<string, unknown>> {
+  const scope = params.scope === "page" ? "page" : "schematic";
+  const uuid = params.uuid;
+  if (typeof uuid !== "string" || !uuid.trim()) {
+    throw apiError("missing_uuid", "deleteSchematic requires an explicit uuid.");
+  }
+
+  const method = scope === "page" ? "deleteSchematicPage" : "deleteSchematic";
+  ensureApi("dmt_Schematic", method);
+
+  const before = await optionalCall(() => eda.dmt_Schematic.getAllSchematicsInfo());
+  const result = await eda.dmt_Schematic[method](uuid);
+  const after = await optionalCall(() => eda.dmt_Schematic.getAllSchematicsInfo());
+
+  const count = (value: unknown) => (Array.isArray(value) ? value.length : undefined);
+  return {
+    scope,
+    uuid,
+    result: sanitize(result),
+    schematicsBefore: count(before),
+    schematicsAfter: count(after),
+    betaApi: true
+  };
+}
+
 async function getNetlist(params: Record<string, any>): Promise<Record<string, unknown>> {
   const type = params.netlistType ?? "Protel2";
 
@@ -893,7 +946,8 @@ function detectCapabilities(): Record<string, boolean> {
     documentSourceRead: Boolean(eda.sys_FileManager?.getDocumentSource),
     documentSourceWrite: Boolean(eda.sys_FileManager?.setDocumentSource),
     netlist: Boolean(eda.sch_Netlist?.getNetlist || eda.sch_ManufactureData?.getNetlistFile),
-    schematicCheck: Boolean(eda.sch_Drc?.check)
+    schematicCheck: Boolean(eda.sch_Drc?.check),
+    schematicDelete: Boolean(eda.dmt_Schematic?.deleteSchematic)
   };
 }
 
