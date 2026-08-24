@@ -4,6 +4,7 @@ import { ok, fail } from "./toolResult.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PROTOCOL_VERSION, type EditorStatus } from "../protocol/messages.js";
 import { diffNetlist, parseProtel2Netlist, summarizeNetlist } from "./netlist.js";
+import { defaultConfigPath, listLocalProjects } from "./localProjects.js";
 import {
   defaultSourcePath,
   fileStamp,
@@ -751,6 +752,37 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
         }
         const result = (await bridge.call("callApi", { path, args }, timeoutMs)) as { resultType?: string };
         return ok(`Called ${path} (returned ${result?.resultType ?? "unknown"}).`, { result });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "easyeda_list_local_projects",
+    {
+      title: "List local EasyEDA Pro projects",
+      description:
+        "Lists the project files the editor can see, with the uuid dmt_Project.openProject expects. Read from EasyEDA's own config (APP_PROJECT_DIR, the same list its Recent Projects tab is built from) and the project files themselves, not through the editor: EasyEDA's file-enumeration APIs hang when called from the extension, and every document API goes dark while no project is loaded -- which is exactly when enumeration is needed. Most recently modified first.",
+      inputSchema: {
+        configPath: z.string().min(1).optional().describe("Defaults to ~/Documents/EasyEDA-Pro/config.json."),
+        maxDepth: z.number().int().min(1).max(6).default(3).describe("How deep to search each project directory."),
+        timeoutMs: DefaultTimeoutSchema.default(30_000)
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async ({ configPath, maxDepth }) => {
+      try {
+        const path = configPath ?? defaultConfigPath();
+        const projects = await listLocalProjects(path, maxDepth);
+        const unreadable = projects.filter((project) => project.error).length;
+        const note = unreadable ? ` ${unreadable} could not be read.` : "";
+        return ok(`Found ${projects.length} local project(s).${note}`, { configPath: path, projects });
       } catch (error) {
         return fail(error);
       }
