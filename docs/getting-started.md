@@ -62,7 +62,7 @@ Configure one tool first. Once `easyeda_doctor` works there, repeat the client s
 In EasyEDA Pro:
 
 1. import the packaged extension from `build/dist`
-2. enable external interaction permission
+2. enable external interaction permission (`Extension Manager -> <the extension> -> Config`)
 3. open a schematic or PCB project
 4. use `MCP Bridge -> Reconnect` if it does not auto-connect
 

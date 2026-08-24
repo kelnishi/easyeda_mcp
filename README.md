@@ -60,7 +60,7 @@ Then:
 1. configure your MCP client to run `node /absolute/path/to/easyeda_mcp/dist/index.js`
 2. open EasyEDA Pro
 3. load the packaged extension from `build/dist`
-4. enable external interaction permission
+4. enable external interaction permission (`Extension Manager -> <the extension> -> Config`)
 5. open a schematic or PCB
 6. ask your MCP client to run `easyeda_doctor`
 

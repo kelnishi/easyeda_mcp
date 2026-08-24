@@ -162,7 +162,7 @@ For more generic client details, see [MCP Client Setup](./mcp-client-setup.md).
 Open EasyEDA Pro, then:
 
 1. import the packaged extension from `build/dist`
-2. enable external interaction permission
+2. enable external interaction permission — **Extension Manager**, select the extension, then the **Config** tab rather than **Detail**
 3. open a schematic or PCB project
 4. use `MCP Bridge -> Reconnect` if the bridge does not connect automatically
 

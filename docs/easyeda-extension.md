@@ -15,7 +15,7 @@ npm run setup:local
 Then in EasyEDA Pro:
 
 1. import or load the packaged extension
-2. enable external interaction permission
+2. enable external interaction permission in `Extension Manager -> <the extension> -> Config`
 3. open a schematic or PCB
 4. use `MCP Bridge -> Reconnect` if it does not connect automatically
 5. run `easyeda_doctor` from your MCP client
@@ -39,13 +39,13 @@ extension/extension.json
 
 ## Permission You Must Enable
 
-EasyEDA Pro may disable external interaction for local extensions.
-
-Enable it for this extension. The bridge needs it because the extension uses `SYS_WebSocket` to connect to:
+EasyEDA Pro disables external interaction by default for any extension that reaches the network or local files, and says so in a Safety Tips dialog. The bridge needs the permission because the extension uses `SYS_WebSocket` to connect to:
 
 ```text
 ws://127.0.0.1:8765
 ```
+
+The toggle is not on the page you land on. Open **Extension Manager**, select the installed extension, then switch from the **Detail** tab to the **Config** tab.
 
 If this permission is off, the MCP client may show tools, but live editor calls will fail.
 

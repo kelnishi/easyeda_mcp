@@ -16,7 +16,7 @@ Fix:
 2. make sure EasyEDA Pro is open
 3. open a schematic or PCB
 4. confirm the extension is installed or loaded
-5. enable external interaction permission
+5. enable external interaction permission (`Extension Manager -> <the extension> -> Config`)
 6. run `MCP Bridge -> Reconnect`
 7. run `easyeda_doctor` again
 
