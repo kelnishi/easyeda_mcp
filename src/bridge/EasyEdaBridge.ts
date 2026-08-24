@@ -53,12 +53,26 @@ export class EasyEdaBridge {
       return;
     }
 
-    this.wss = new WebSocketServer({ host: this.host, port: this.port });
-    this.wss.on("connection", (socket) => this.attachSocket(socket));
-    await new Promise<void>((resolve, reject) => {
-      this.wss?.once("listening", resolve);
-      this.wss?.once("error", reject);
-    });
+    const wss = new WebSocketServer({ host: this.host, port: this.port });
+    wss.on("connection", (socket) => this.attachSocket(socket));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        wss.once("listening", resolve);
+        wss.once("error", reject);
+      });
+    } catch (error) {
+      // Another server process already owns the port. The extension can only talk to one
+      // of us, so this one runs bridge-less rather than taking the whole server down.
+      if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+        this.logger.error(
+          `[easyeda-mcp] WebSocket bridge port ${this.port} already in use; continuing without a bridge.`
+        );
+        return;
+      }
+      throw error;
+    }
+
+    this.wss = wss;
     this.logger.error(`[easyeda-mcp] WebSocket bridge listening at ${this.endpoint}`);
   }
 
