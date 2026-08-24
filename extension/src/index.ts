@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.2.10";
+const EXTENSION_VERSION = "0.3.0";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -111,6 +111,8 @@ const handlers: Record<string, (params: Record<string, any>) => Promise<unknown>
   openProject,
   openDocument,
   closeDocument,
+  apiInventory,
+  callApi,
   confirmedAction
 };
 
@@ -754,6 +756,79 @@ async function exportPdf(params: Record<string, any>): Promise<Record<string, un
  * with nothing open at all -- so the caller needs a way to put a sheet on screen
  * rather than asking a person to click it.
  */
+/**
+ * Every capability added today started with guessing which method existed and
+ * what it wanted, then spending an install cycle to find out. The editor knows
+ * the answer -- `eda` is right there -- so ask it.
+ */
+async function apiInventory(params: Record<string, any>): Promise<Record<string, unknown>> {
+  const filter = typeof params.namespace === "string" ? params.namespace.toLowerCase() : undefined;
+  const namespaces: Record<string, string[]> = {};
+
+  for (const key of Object.keys(eda ?? {})) {
+    if (filter && !key.toLowerCase().includes(filter)) {
+      continue;
+    }
+    const value = (eda as Record<string, any>)[key];
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+    const methods: string[] = [];
+    for (const name of listMembers(value)) {
+      if (typeof value[name] === "function") {
+        methods.push(name);
+      }
+    }
+    if (methods.length) {
+      namespaces[key] = methods.sort();
+    }
+  }
+
+  return { namespaces, namespaceCount: Object.keys(namespaces).length, betaApi: true };
+}
+
+/** Methods can live on the prototype, so own keys alone under-report the surface. */
+function listMembers(value: object): string[] {
+  const names = new Set<string>(Object.keys(value));
+  let proto = Object.getPrototypeOf(value);
+  while (proto && proto !== Object.prototype) {
+    for (const name of Object.getOwnPropertyNames(proto)) {
+      if (name !== "constructor") {
+        names.add(name);
+      }
+    }
+    proto = Object.getPrototypeOf(proto);
+  }
+  return [...names];
+}
+
+/**
+ * Calls any eda API by dotted path. This exists so a hypothesis about the API
+ * can be tested in one call rather than one release: several capabilities here
+ * cost an install cycle each purely to discover an argument shape.
+ */
+async function callApi(params: Record<string, any>): Promise<Record<string, unknown>> {
+  const path = params.path;
+  if (typeof path !== "string" || !path.includes(".")) {
+    throw apiError("bad_path", 'callApi needs a dotted path such as "dmt_Project.openProject".');
+  }
+  const [namespace, method] = path.split(".");
+  ensureApi(namespace, method);
+
+  const args = Array.isArray(params.args) ? params.args : [];
+  const result = await (eda as Record<string, any>)[namespace][method](...args);
+
+  return {
+    path,
+    args: sanitize(args),
+    // An API that resolves with undefined is this editor's usual way of failing,
+    // so the caller needs to see the difference between that and a real value.
+    resultType: result === undefined ? "undefined" : result === null ? "null" : typeof result,
+    result: sanitize(result),
+    betaApi: true
+  };
+}
+
 async function openProject(params: Record<string, any>): Promise<Record<string, unknown>> {
   ensureApi("dmt_Project", "openProject");
   const uuid = requireUuid(params.uuid, "openProject");

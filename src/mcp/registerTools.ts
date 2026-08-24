@@ -711,6 +711,53 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
   });
 
   registerReadTool(server, bridge, {
+    name: "easyeda_api_inventory",
+    title: "List the EasyEDA Pro API surface",
+    description:
+      "Enumerates the namespaces and method names the live `eda` object actually exposes. Use this before assuming a capability is missing: the bridge's tool list is much narrower than the editor's API, and documentation for it has repeatedly been wrong about names and behaviour.",
+    method: "apiInventory",
+    inputSchema: {
+      namespace: z.string().min(1).optional().describe("Case-insensitive substring filter, e.g. 'project' or 'lib_'."),
+      timeoutMs: DefaultTimeoutSchema.default(30_000)
+    },
+    summary: "Listed the EasyEDA Pro API surface."
+  });
+
+  server.registerTool(
+    "easyeda_call_api",
+    {
+      title: "Call an EasyEDA Pro API directly",
+      description:
+        "Calls any eda API by dotted path, e.g. 'dmt_Project.getAllProjectsUuid'. For probing behaviour that no wrapper covers yet -- it reports resultType separately, because an API resolving with undefined is this editor's usual way of failing. It can call mutating methods, so it requires explicit confirmation.",
+      inputSchema: {
+        path: z.string().min(1).describe("Dotted path, e.g. 'dmt_Project.openProject'."),
+        args: z.array(z.unknown()).default([]).describe("Positional arguments."),
+        confirmation: z
+          .string()
+          .describe("Must explicitly confirm, e.g. 'confirmed: probe getAllProjectsUuid'."),
+        timeoutMs: DefaultTimeoutSchema.default(60_000)
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false
+      }
+    },
+    async ({ path, args, confirmation, timeoutMs }) => {
+      try {
+        if (!hasExplicitMutationConfirmation(confirmation)) {
+          return fail(new Error(`Refused to call ${path}. The confirmation text must explicitly confirm.`));
+        }
+        const result = (await bridge.call("callApi", { path, args }, timeoutMs)) as { resultType?: string };
+        return ok(`Called ${path} (returned ${result?.resultType ?? "unknown"}).`, { result });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
+  registerReadTool(server, bridge, {
     name: "easyeda_open_project",
     title: "Open a project in EasyEDA Pro",
     description:

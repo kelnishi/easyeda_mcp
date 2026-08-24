@@ -237,6 +237,40 @@ describe("mutation confirmation guard", () => {
   });
 });
 
+describe("api probing", () => {
+  function bridgeWith(call: ReturnType<typeof vi.fn>) {
+    return {
+      endpoint: "ws://127.0.0.1:8765",
+      getStatus: () => ({ connected: true, updatedAt: new Date().toISOString() }),
+      call
+    };
+  }
+
+  it("refuses a direct API call without explicit confirmation", async () => {
+    const call = vi.fn();
+    const client = await makeClient(bridgeWith(call));
+    const result = await client.callTool({
+      name: "easyeda_call_api",
+      arguments: { path: "dmt_Project.openProject", args: ["x"], confirmation: "do it" }
+    });
+
+    expect(result.isError).toBe(true);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("surfaces resultType so an undefined resolve is not read as success", async () => {
+    // openProject and openDocument both resolved with undefined while doing
+    // nothing, which read as success for three calls running.
+    const client = await makeClient(bridgeWith(vi.fn(async () => ({ path: "x.y", resultType: "undefined" }))));
+    const result = await client.callTool({
+      name: "easyeda_call_api",
+      arguments: { path: "x.y", confirmation: "confirmed: probe" }
+    });
+
+    expect(result.content?.[0]?.text).toContain("returned undefined");
+  });
+});
+
 describe("library device search", () => {
   const DEVICE = {
     name: "AP63205QWU-7",
