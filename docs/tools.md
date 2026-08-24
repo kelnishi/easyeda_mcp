@@ -21,6 +21,8 @@ Use this page when you know what you want to do and need the right MCP tool.
 | Move the editor to a part | `easyeda_navigate_component` |
 | Export manufacturing files | `easyeda_export_bom`, `easyeda_export_netlist`, `easyeda_export_gerber`, `easyeda_export_pdf` |
 | Save/import/autoroute/autolayout | `easyeda_confirmed_action` |
+| Read the document's own source | `easyeda_get_document_source` |
+| Replace the document's source | `easyeda_set_document_source` |
 
 ## Recommended First Flow
 
@@ -209,6 +211,55 @@ Exports Gerber fabrication data from the active PCB.
 ### `easyeda_export_pdf`
 
 Exports a PDF from the active schematic or PCB document.
+
+## Document Source
+
+EasyEDA Pro serializes a document as JSON-lines primitive records -- one per
+`DOCHEAD`, `CANVAS`, `PART`, `RECT`, `PIN`, `WIRE`, `COMPONENT`. These two tools
+read and replace that source directly, which is the only whole-document write
+the extension API offers: `sch_PrimitiveComponent.create()` places existing
+library devices and cannot build a symbol with custom pins.
+
+### `easyeda_get_document_source`
+
+Saves the active document's source to a local file and returns a record-type
+histogram with the first lines, rather than the whole document.
+
+The histogram answers questions no component-level tool can. A sheet whose
+symbols imported as bare rectangles reports `RECT` and `ATTR` records and no
+`PIN` records at all -- while `easyeda_get_component_pins` returns `[]` for that
+document and for a healthy one it simply cannot read.
+
+| Field | Meaning |
+| --- | --- |
+| `path` | Where the full source was saved |
+| `recordTypes` | Count per primitive type |
+| `lineCount`, `byteLength` | Document size |
+| `head` | First `headLineCount` lines (default 20) |
+
+Pass `inline: true` to get the whole source back in the response. Only do that
+for a small document.
+
+### `easyeda_set_document_source`
+
+Replaces the entire active document. Takes `filePath` or `source`, plus the same
+explicit `confirmation` the other mutating tools require.
+
+Before writing, it reads the current source and saves it to `backupPath`
+(default: a timestamped file in the system temp directory), and aborts if that
+backup cannot be written. Pass `skipBackup: true` only for a document you are
+willing to lose.
+
+**Check `applied`.** EasyEDA reports malformed source by returning `false`, not
+by raising an error, so a resolved call is not by itself a landed write:
+
+```json
+{
+  "applied": false,
+  "reason": "EasyEDA rejected the source; the document is unchanged.",
+  "backupPath": "/tmp/easyeda-mcp/document-backup-20260824T204643.epru"
+}
+```
 
 ## Explicitly Confirmed Actions
 
