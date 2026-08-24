@@ -363,6 +363,50 @@ describe("EasyEDA extension bridge handlers", () => {
     });
   });
 
+  it("renders an object rejection instead of [object Object]", async () => {
+    // EasyEDA rejects with plain objects. String() turns those into
+    // "[object Object]", which is what the caller sees instead of the failure.
+    vi.stubGlobal("eda", {
+      ...(globalThis as { eda: Record<string, unknown> }).eda,
+      sch_Drc: {
+        check: vi.fn(async () => {
+          throw { code: "no_document", message: "No schematic is open." };
+        })
+      }
+    });
+
+    const extension = await import("./index.js");
+    extension.connect();
+    await registration.onMessage?.({
+      data: JSON.stringify({ kind: "call", requestId: "err-1", method: "schematicCheck", params: {} })
+    } as MessageEvent<string>);
+
+    const message = JSON.parse(sentMessages.at(-1)?.message ?? "{}");
+    expect(message.kind).toBe("error");
+    expect(message.error.message).toBe("No schematic is open.");
+    expect(message.error.code).toBe("no_document");
+  });
+
+  it("falls back to JSON when an object rejection carries no message", async () => {
+    vi.stubGlobal("eda", {
+      ...(globalThis as { eda: Record<string, unknown> }).eda,
+      sch_Drc: {
+        check: vi.fn(async () => {
+          throw { status: 500, detail: "upstream" };
+        })
+      }
+    });
+
+    const extension = await import("./index.js");
+    extension.connect();
+    await registration.onMessage?.({
+      data: JSON.stringify({ kind: "call", requestId: "err-2", method: "schematicCheck", params: {} })
+    } as MessageEvent<string>);
+
+    const message = JSON.parse(sentMessages.at(-1)?.message ?? "{}");
+    expect(message.error.message).toContain("upstream");
+  });
+
   it("shows diagnostics with connection and document details", async () => {
     const extension = await import("./index.js");
 

@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.2.7";
+const EXTENSION_VERSION = "0.2.8";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -1269,10 +1269,33 @@ function normalizeError(error: unknown): BridgeErrorMessage["error"] {
       details: sanitize(coded.details)
     };
   }
+  // EasyEDA rejects with plain objects, and String() renders those as
+  // "[object Object]" -- which is what the caller sees instead of the failure.
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const message =
+      pickString(record, ["message", "msg", "error", "reason", "description"]) ??
+      safeJson(record) ??
+      "EasyEDA returned an error object with no message.";
+    return {
+      code: pickString(record, ["code", "errorCode", "name"]) ?? "easyeda_extension_error",
+      message,
+      details: sanitize(error)
+    };
+  }
   return {
     code: "easyeda_extension_error",
     message: String(error)
   };
+}
+
+function safeJson(value: unknown): string | undefined {
+  try {
+    const text = JSON.stringify(value);
+    return text && text !== "{}" ? text.slice(0, 500) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function optionalCall<T>(fn: () => T | Promise<T>): Promise<T | undefined> {

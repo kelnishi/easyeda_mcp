@@ -888,8 +888,18 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
           return fail(new Error('Refused to import. The confirmation text must explicitly confirm, e.g. "confirmed: import sheet 2".'));
         }
         const content = await readSourceFile(filePath);
+
+        // The project uuid usually rides along on the active document, but the
+        // editor can sit with nothing open -- in which case the schematics list
+        // still knows which project they belong to.
         const status = bridge.getStatus() as { documentInfo?: { parentProjectUuid?: string } };
-        const projectUuid = status?.documentInfo?.parentProjectUuid;
+        let projectUuid = status?.documentInfo?.parentProjectUuid;
+        if (!projectUuid && intoCurrentProject) {
+          const listed = (await bridge.call("listSchematics", {}, timeoutMs)) as {
+            schematics?: Array<{ parentProjectUuid?: string }>;
+          };
+          projectUuid = listed?.schematics?.find((entry) => entry?.parentProjectUuid)?.parentProjectUuid;
+        }
 
         const saveTo = intoCurrentProject && projectUuid
           ? { operation: "Existing Project", projectUuid }
