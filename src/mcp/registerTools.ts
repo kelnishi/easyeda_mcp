@@ -710,6 +710,34 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     summary: "Listed EasyEDA Pro schematics."
   });
 
+  registerReadTool(server, bridge, {
+    name: "easyeda_open_document",
+    title: "Open a document in the EasyEDA Pro editor",
+    description:
+      "Opens a schematic page (or other document) by uuid and makes it active. Several APIs act on whatever document is active, and a freshly restarted editor can have nothing open -- so call this rather than asking someone to click a tab. Page uuids come from easyeda_list_schematics.",
+    method: "openDocument",
+    inputSchema: {
+      uuid: z.string().min(1).describe("Document uuid — a schematic PAGE uuid, not the schematic's."),
+      activate: z.boolean().default(true).describe("Bring the opened tab to the front."),
+      splitScreenId: z.string().min(1).optional(),
+      timeoutMs: DefaultTimeoutSchema.default(30_000)
+    },
+    summary: "Opened a document in EasyEDA Pro."
+  });
+
+  registerReadTool(server, bridge, {
+    name: "easyeda_close_document",
+    title: "Close an EasyEDA Pro editor tab",
+    description:
+      "Closes a tab by its id, as returned by easyeda_open_document. Closes the tab only; nothing is deleted.",
+    method: "closeDocument",
+    inputSchema: {
+      tabId: z.string().min(1),
+      timeoutMs: DefaultTimeoutSchema.default(30_000)
+    },
+    summary: "Closed an EasyEDA Pro tab."
+  });
+
   server.registerTool(
     "easyeda_get_symbol_source",
     {

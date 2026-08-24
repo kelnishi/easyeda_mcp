@@ -27,6 +27,7 @@ Use this page when you know what you want to do and need the right MCP tool.
 | List schematics and sheets | `easyeda_list_schematics` |
 | Delete a schematic or sheet | `easyeda_delete_schematic` |
 | Find a real part (LCSC) | `easyeda_find_library_device` |
+| Put a sheet on screen | `easyeda_open_document` |
 | Read a symbol (where pins live) | `easyeda_get_symbol_source` |
 | Fix a symbol's pins | `easyeda_set_symbol_source` |
 | Check connectivity against intent | `easyeda_get_netlist` |

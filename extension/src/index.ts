@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.2.8";
+const EXTENSION_VERSION = "0.2.9";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -108,6 +108,8 @@ const handlers: Record<string, (params: Record<string, any>) => Promise<unknown>
   findLibraryDevice,
   getSymbolSource,
   updateSymbolSource,
+  openDocument,
+  closeDocument,
   confirmedAction
 };
 
@@ -746,6 +748,37 @@ async function exportPdf(params: Record<string, any>): Promise<Record<string, un
  * which moves the editor off whatever the user was looking at -- so the tab is
  * closed again unless the caller asks to keep it.
  */
+/**
+ * Several APIs act on whatever document is active, and a fresh editor can sit
+ * with nothing open at all -- so the caller needs a way to put a sheet on screen
+ * rather than asking a person to click it.
+ */
+async function openDocument(params: Record<string, any>): Promise<Record<string, unknown>> {
+  ensureApi("dmt_EditorControl", "openDocument");
+  const uuid = requireUuid(params.uuid, "openDocument");
+  const tabId = await eda.dmt_EditorControl.openDocument(uuid, params.splitScreenId);
+
+  if (params.activate !== false && tabId) {
+    await optionalCall(() =>
+      eda.dmt_EditorControl?.activateDocument ? eda.dmt_EditorControl.activateDocument(tabId) : undefined
+    );
+  }
+
+  const documentInfo = await optionalCall(() => eda.dmt_SelectControl.getCurrentDocumentInfo());
+  return { uuid, tabId, activeDocument: sanitize(documentInfo), betaApi: true };
+}
+
+async function closeDocument(params: Record<string, any>): Promise<Record<string, unknown>> {
+  ensureApi("dmt_EditorControl", "closeDocument");
+  const tabId = params.tabId;
+  if (typeof tabId !== "string" || !tabId.trim()) {
+    throw apiError("missing_tab_id", "closeDocument requires a tabId.");
+  }
+  await eda.dmt_EditorControl.closeDocument(tabId);
+  const documentInfo = await optionalCall(() => eda.dmt_SelectControl.getCurrentDocumentInfo());
+  return { tabId, closed: true, activeDocument: sanitize(documentInfo), betaApi: true };
+}
+
 async function getSymbolSource(params: Record<string, any>): Promise<Record<string, unknown>> {
   ensureApi("lib_Symbol", "openInEditor");
   ensureApi("sys_FileManager", "getDocumentSource");
@@ -1108,7 +1141,8 @@ function detectCapabilities(): Record<string, boolean> {
     projectImport: Boolean(eda.sys_FileManager?.importProjectByProjectFile),
     librarySearch: Boolean(eda.lib_Device?.search || eda.lib_Device?.getByLcscIds),
     symbolSourceRead: Boolean(eda.lib_Symbol?.openInEditor),
-    symbolSourceWrite: Boolean(eda.lib_Symbol?.updateDocumentSource)
+    symbolSourceWrite: Boolean(eda.lib_Symbol?.updateDocumentSource),
+    documentOpen: Boolean(eda.dmt_EditorControl?.openDocument)
   };
 }
 
