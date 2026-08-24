@@ -98,6 +98,8 @@ const handlers: Record<string, (params: Record<string, any>) => Promise<unknown>
   exportNetlist,
   exportGerber,
   exportPdf,
+  getDocumentSource,
+  setDocumentSource,
   confirmedAction
 };
 
@@ -688,6 +690,51 @@ async function exportPdf(params: Record<string, any>): Promise<Record<string, un
   return saveApiFile(file, `${fileName}.pdf`, true);
 }
 
+/**
+ * Document source is EasyEDA Pro's own serialization of the open document: one
+ * JSON-lines record per primitive (DOCHEAD, CANVAS, PART, RECT, PIN, WIRE,
+ * COMPONENT, ...). Reading it is the only way to learn the exact record shape
+ * the editor accepts, and writing it is the only whole-document write the
+ * extension API offers -- sch_PrimitiveComponent.create() places library
+ * devices and cannot build a symbol with custom pins.
+ */
+async function getDocumentSource(): Promise<Record<string, unknown>> {
+  ensureApi("sys_FileManager", "getDocumentSource");
+  const source = await eda.sys_FileManager.getDocumentSource();
+  const documentInfo = await optionalCall(() => eda.dmt_SelectControl.getCurrentDocumentInfo());
+  if (typeof source !== "string") {
+    throw apiError("unexpected_source", `getDocumentSource returned ${typeof source}, expected string.`);
+  }
+  return {
+    source,
+    byteLength: source.length,
+    documentInfo: sanitize(documentInfo),
+    betaApi: true
+  };
+}
+
+/**
+ * Replaces the whole open document. Returns false -- not an error -- when the
+ * editor rejects the source as malformed, so the caller must check `applied`
+ * rather than assuming a resolved promise means the write landed.
+ */
+async function setDocumentSource(params: Record<string, any>): Promise<Record<string, unknown>> {
+  ensureApi("sys_FileManager", "setDocumentSource");
+  const source = params.source;
+  if (typeof source !== "string" || !source) {
+    throw apiError("missing_source", "setDocumentSource requires a non-empty source string.");
+  }
+  const documentInfo = await optionalCall(() => eda.dmt_SelectControl.getCurrentDocumentInfo());
+  const applied = await eda.sys_FileManager.setDocumentSource(source);
+  return {
+    applied: applied === true,
+    byteLength: source.length,
+    documentInfo: sanitize(documentInfo),
+    reason: applied === true ? undefined : "EasyEDA rejected the source; the document is unchanged.",
+    betaApi: true
+  };
+}
+
 async function confirmedAction(params: Record<string, any>): Promise<Record<string, unknown>> {
   const action = String(params.action ?? "");
   const documentInfo = await optionalCall(() => eda.dmt_SelectControl.getCurrentDocumentInfo());
@@ -738,7 +785,9 @@ function detectCapabilities(): Record<string, boolean> {
     schDocument: Boolean(eda.sch_Document),
     pcbManufactureData: Boolean(eda.pcb_ManufactureData),
     schManufactureData: Boolean(eda.sch_ManufactureData),
-    fileSystem: Boolean(eda.sys_FileSystem?.saveFile)
+    fileSystem: Boolean(eda.sys_FileSystem?.saveFile),
+    documentSourceRead: Boolean(eda.sys_FileManager?.getDocumentSource),
+    documentSourceWrite: Boolean(eda.sys_FileManager?.setDocumentSource)
   };
 }
 

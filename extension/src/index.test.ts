@@ -227,6 +227,78 @@ describe("EasyEDA extension bridge handlers", () => {
     });
   });
 
+  it("returns the document source with its byte length", async () => {
+    vi.stubGlobal("eda", {
+      ...(globalThis as { eda: Record<string, unknown> }).eda,
+      sys_FileManager: {
+        getDocumentSource: vi.fn(async () => '{"type":"PIN"}||{}|')
+      }
+    });
+
+    const extension = await import("./index.js");
+    extension.connect();
+    await registration.onMessage?.({
+      data: JSON.stringify({ kind: "call", requestId: "src-1", method: "getDocumentSource", params: {} })
+    } as MessageEvent<string>);
+
+    const resultMessage = JSON.parse(sentMessages.at(-1)?.message ?? "{}");
+    expect(resultMessage.kind).toBe("result");
+    expect(resultMessage.result).toMatchObject({
+      source: '{"type":"PIN"}||{}|',
+      byteLength: 19
+    });
+  });
+
+  it("reports a rejected setDocumentSource as applied:false", async () => {
+    // EasyEDA answers malformed source with false rather than an exception.
+    vi.stubGlobal("eda", {
+      ...(globalThis as { eda: Record<string, unknown> }).eda,
+      sys_FileManager: {
+        getDocumentSource: vi.fn(async () => "OLD"),
+        setDocumentSource: vi.fn(async () => false)
+      }
+    });
+
+    const extension = await import("./index.js");
+    extension.connect();
+    await registration.onMessage?.({
+      data: JSON.stringify({
+        kind: "call",
+        requestId: "src-2",
+        method: "setDocumentSource",
+        params: { source: "NEW" }
+      })
+    } as MessageEvent<string>);
+
+    const resultMessage = JSON.parse(sentMessages.at(-1)?.message ?? "{}");
+    expect(resultMessage.result).toMatchObject({ applied: false });
+    expect(resultMessage.result.reason).toMatch(/unchanged/i);
+  });
+
+  it("refuses setDocumentSource without a source string", async () => {
+    vi.stubGlobal("eda", {
+      ...(globalThis as { eda: Record<string, unknown> }).eda,
+      sys_FileManager: {
+        setDocumentSource: vi.fn(async () => true)
+      }
+    });
+
+    const extension = await import("./index.js");
+    extension.connect();
+    await registration.onMessage?.({
+      data: JSON.stringify({
+        kind: "call",
+        requestId: "src-3",
+        method: "setDocumentSource",
+        params: {}
+      })
+    } as MessageEvent<string>);
+
+    const resultMessage = JSON.parse(sentMessages.at(-1)?.message ?? "{}");
+    expect(resultMessage.kind).toBe("error");
+    expect(resultMessage.error.code).toBe("missing_source");
+  });
+
   it("shows diagnostics with connection and document details", async () => {
     const extension = await import("./index.js");
 

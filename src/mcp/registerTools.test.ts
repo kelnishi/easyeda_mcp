@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { readFile } from "node:fs/promises";
 import { hasExplicitMutationConfirmation, registerEasyEdaTools } from "./registerTools.js";
 
 const clients: Client[] = [];
@@ -233,5 +234,95 @@ describe("mutation confirmation guard", () => {
         }
       }
     });
+  });
+});
+
+describe("document source tools", () => {
+  const SOURCE = '{"type":"PIN","ticket":1,"id":"e0"}||{}|';
+
+  function bridgeWith(call: ReturnType<typeof vi.fn>) {
+    return {
+      endpoint: "ws://127.0.0.1:8765",
+      getStatus: () => ({ connected: true, updatedAt: new Date().toISOString() }),
+      call
+    };
+  }
+
+  it("saves the source to disk and summarizes it instead of returning it wholesale", async () => {
+    const call = vi.fn(async () => ({ source: SOURCE, documentInfo: { uuid: "doc-1" } }));
+    const client = await makeClient(bridgeWith(call));
+
+    const result = await client.callTool({
+      name: "easyeda_get_document_source",
+      arguments: {}
+    });
+
+    expect(result.isError).toBeFalsy();
+    const structured = result.structuredContent as Record<string, unknown>;
+    expect(structured.recordTypes).toEqual({ PIN: 1 });
+    expect(structured.source).toBeUndefined();
+    expect(typeof structured.path).toBe("string");
+    expect(await readFile(structured.path as string, "utf8")).toBe(SOURCE);
+  });
+
+  it("refuses to write without an explicit confirmation", async () => {
+    const call = vi.fn();
+    const client = await makeClient(bridgeWith(call));
+
+    const result = await client.callTool({
+      name: "easyeda_set_document_source",
+      arguments: { source: SOURCE, confirmation: "go ahead" }
+    });
+
+    expect(result.isError).toBe(true);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("backs the current document up before replacing it", async () => {
+    const call = vi.fn(async (method: string) =>
+      method === "getDocumentSource" ? { source: "OLD" } : { applied: true }
+    );
+    const client = await makeClient(bridgeWith(call as never));
+
+    const result = await client.callTool({
+      name: "easyeda_set_document_source",
+      arguments: { source: SOURCE, confirmation: "confirmed: replace it" }
+    });
+
+    const structured = result.structuredContent as Record<string, unknown>;
+    expect(structured.applied).toBe(true);
+    expect(await readFile(structured.backupPath as string, "utf8")).toBe("OLD");
+    expect(call.mock.calls.map((c) => c[0])).toEqual(["getDocumentSource", "setDocumentSource"]);
+  });
+
+  it("surfaces a rejected write as applied:false rather than success", async () => {
+    // EasyEDA signals malformed source by returning false, not by throwing, so
+    // a resolved promise must not be read as a landed write.
+    const call = vi.fn(async (method: string) =>
+      method === "getDocumentSource" ? { source: "OLD" } : { applied: false, reason: "bad format" }
+    );
+    const client = await makeClient(bridgeWith(call as never));
+
+    const result = await client.callTool({
+      name: "easyeda_set_document_source",
+      arguments: { source: SOURCE, confirmation: "confirmed: replace it", skipBackup: true }
+    });
+
+    const structured = result.structuredContent as Record<string, unknown>;
+    expect(structured.applied).toBe(false);
+    expect(structured.reason).toBe("bad format");
+  });
+
+  it("rejects ambiguous input that names both a file and inline source", async () => {
+    const call = vi.fn();
+    const client = await makeClient(bridgeWith(call));
+
+    const result = await client.callTool({
+      name: "easyeda_set_document_source",
+      arguments: { source: SOURCE, filePath: "/tmp/x.epru", confirmation: "confirmed: replace it" }
+    });
+
+    expect(result.isError).toBe(true);
+    expect(call).not.toHaveBeenCalled();
   });
 });

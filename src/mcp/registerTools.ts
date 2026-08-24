@@ -3,6 +3,14 @@ import type { EasyEdaBridge } from "../bridge/EasyEdaBridge.js";
 import { ok, fail } from "./toolResult.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PROTOCOL_VERSION, type EditorStatus } from "../protocol/messages.js";
+import {
+  defaultSourcePath,
+  fileStamp,
+  headLines,
+  readSourceFile,
+  summarizeSource,
+  writeSourceFile
+} from "./documentSource.js";
 
 const DefaultTimeoutSchema = z.number().int().positive().max(120_000).default(10_000);
 const EndpointRefSchema = z.union([
@@ -411,6 +419,134 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     },
     summary: "Requested EasyEDA Pro PDF export."
   });
+
+  server.registerTool(
+    "easyeda_get_document_source",
+    {
+      title: "Read EasyEDA Pro document source",
+      description:
+        "Reads the active document's native EasyEDA Pro source (JSON-lines primitive records) and saves it to a local file. Returns a record-type histogram and the first lines rather than the whole document, so large sheets stay readable.",
+      inputSchema: {
+        outPath: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Where to save the source. Defaults to a timestamped file under the system temp directory."),
+        headLineCount: z.number().int().min(0).max(200).default(20),
+        inline: z
+          .boolean()
+          .default(false)
+          .describe("Return the full source in the response. Leave false for anything but a small document."),
+        timeoutMs: DefaultTimeoutSchema.default(30_000)
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async ({ outPath, headLineCount, inline, timeoutMs }) => {
+      try {
+        const result = (await bridge.call("getDocumentSource", {}, timeoutMs)) as {
+          source: string;
+          documentInfo?: unknown;
+        };
+        const source = result?.source ?? "";
+        const path = await writeSourceFile(outPath ?? defaultSourcePath("snapshot", fileStamp(new Date())), source);
+        const summary = summarizeSource(source);
+        return ok(`Read EasyEDA Pro document source (${summary.byteLength} bytes) and saved it to ${path}.`, {
+          path,
+          ...summary,
+          documentInfo: result?.documentInfo,
+          head: headLineCount ? headLines(source, headLineCount) : undefined,
+          source: inline ? source : undefined
+        });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "easyeda_set_document_source",
+    {
+      title: "Replace EasyEDA Pro document source",
+      description:
+        "Replaces the active document's entire source. Takes a backup of the current source first. EasyEDA reports malformed input by refusing the write, so check `applied` rather than assuming success.",
+      inputSchema: {
+        filePath: z.string().min(1).optional().describe("Local file holding the new document source."),
+        source: z.string().min(1).optional().describe("Inline source. Prefer filePath for anything sizeable."),
+        confirmation: z
+          .string()
+          .describe("Must explicitly confirm, e.g. 'confirmed: replace the scratch sheet'."),
+        backupPath: z.string().min(1).optional().describe("Where to save the pre-write backup."),
+        skipBackup: z
+          .boolean()
+          .default(false)
+          .describe("Skip the safety backup. Only for a document you are willing to lose."),
+        timeoutMs: DefaultTimeoutSchema.default(60_000)
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false
+      }
+    },
+    async ({ filePath, source, confirmation, backupPath, skipBackup, timeoutMs }) => {
+      try {
+        if (!hasExplicitMutationConfirmation(confirmation)) {
+          return fail(
+            new Error(
+              "Refused to replace the document. The confirmation text must explicitly confirm, e.g. \"confirmed: replace the scratch sheet\"."
+            )
+          );
+        }
+        if (!filePath && !source) {
+          return fail(new Error("Provide either filePath or source."));
+        }
+        if (filePath && source) {
+          return fail(new Error("Provide filePath or source, not both."));
+        }
+
+        const nextSource = source ?? (await readSourceFile(filePath as string));
+
+        // The write replaces the whole document, so a backup is worth more than
+        // the round trip it costs. Failing to back up aborts the write.
+        let savedBackupPath: string | undefined;
+        if (!skipBackup) {
+          const current = (await bridge.call("getDocumentSource", {}, timeoutMs)) as { source?: string };
+          savedBackupPath = await writeSourceFile(
+            backupPath ?? defaultSourcePath("backup", fileStamp(new Date())),
+            current?.source ?? ""
+          );
+        }
+
+        const result = (await bridge.call("setDocumentSource", { source: nextSource }, timeoutMs)) as {
+          applied?: boolean;
+          reason?: string;
+        };
+
+        if (!result?.applied) {
+          return ok(`EasyEDA rejected the source; the document is unchanged.${savedBackupPath ? ` Backup at ${savedBackupPath}.` : ""}`, {
+            applied: false,
+            reason: result?.reason ?? "EasyEDA returned false.",
+            backupPath: savedBackupPath,
+            ...summarizeSource(nextSource)
+          });
+        }
+
+        return ok(`Replaced the EasyEDA Pro document source.${savedBackupPath ? ` Backup at ${savedBackupPath}.` : ""}`, {
+          applied: true,
+          backupPath: savedBackupPath,
+          ...summarizeSource(nextSource)
+        });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
 
   server.registerTool(
     "easyeda_confirmed_action",
