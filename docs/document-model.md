@@ -75,6 +75,30 @@ Moving a component means moving four things: its `COMPONENT` record, every
 pin, and the net-label `ATTR` at each stub's far end. Miss the stub and the pin
 goes silently unconnected.
 
+## Cloud-backed calls fail on a local project
+
+An install configured `"type": "HALF_OFFLINE"` with a project held in a local
+`.eprj2` resolves some calls against `https://pro.easyeda.com`. The lookups 404
+because the resource is local-only, not because the network is down.
+
+| Call | Behaviour |
+| --- | --- |
+| `dmt_Project.openProject` | resolves, does nothing — `/api/v4/projects/<uuid>` 404 |
+| `dmt_Project.getAllProjectsUuid` | `[]` |
+| `lib_Symbol.openInEditor` | throws — `/api/v2/components/<uuid>` 404 |
+| `sys_FileManager.importProjectByProjectFile` | resolves, does nothing, logs nothing |
+| `sys_FileSystem.getProjectsPaths`, `listFilesOfFileSystem` | hang |
+
+Everything acting on the already-open document is unaffected: source read and
+write, `SCH_Drc.check`, connection verification, device search, delete, and
+`openDocument` once a project is loaded. The split is cloud resolution versus
+local document work, not read versus write.
+
+**The editor's log is where the cause appears.** `~/Documents/EasyEDA-Pro/logs/
+warn/<date>.log` names the failing endpoint; the bridge sees only an `Error`
+whose message is `"[object Object]"`. Read the log before forming a theory —
+three rounds of argument-guessing preceded doing so.
+
 ## One client owns the bridge
 
 The MCP server *hosts* the WebSocket on port 8765 rather than connecting to one.
