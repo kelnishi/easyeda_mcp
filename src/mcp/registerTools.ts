@@ -732,7 +732,14 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
         "Calls any eda API by dotted path, e.g. 'dmt_Project.getAllProjectsUuid'. For probing behaviour that no wrapper covers yet -- it reports resultType separately, because an API resolving with undefined is this editor's usual way of failing. It can call mutating methods, so it requires explicit confirmation.",
       inputSchema: {
         path: z.string().min(1).describe("Dotted path, e.g. 'dmt_Project.openProject'."),
-        args: z.array(z.unknown()).default([]).describe("Positional arguments."),
+        args: z
+          .array(z.unknown())
+          .default([])
+          .describe('Positional arguments. Use {"__file":{"content":"...","name":"x.json"}} where the API wants a File.'),
+        fileArg: z
+          .object({ index: z.number().int().min(0), filePath: z.string().min(1), name: z.string().min(1).optional() })
+          .optional()
+          .describe("Read a local file and pass it as a File at this argument index, so large content need not be inlined."),
         confirmation: z
           .string()
           .describe("Must explicitly confirm, e.g. 'confirmed: probe getAllProjectsUuid'."),
@@ -745,12 +752,19 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
         openWorldHint: false
       }
     },
-    async ({ path, args, confirmation, timeoutMs }) => {
+    async ({ path, args, fileArg, confirmation, timeoutMs }) => {
       try {
         if (!hasExplicitMutationConfirmation(confirmation)) {
           return fail(new Error(`Refused to call ${path}. The confirmation text must explicitly confirm.`));
         }
-        const result = (await bridge.call("callApi", { path, args }, timeoutMs)) as { resultType?: string };
+        const finalArgs = [...args];
+        if (fileArg) {
+          const content = await readSourceFile(fileArg.filePath);
+          finalArgs[fileArg.index] = {
+            __file: { content, name: fileArg.name ?? fileArg.filePath.split("/").pop() }
+          };
+        }
+        const result = (await bridge.call("callApi", { path, args: finalArgs }, timeoutMs)) as { resultType?: string };
         return ok(`Called ${path} (returned ${result?.resultType ?? "unknown"}).`, { result });
       } catch (error) {
         return fail(error);

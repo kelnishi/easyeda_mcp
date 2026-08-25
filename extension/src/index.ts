@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.3.1";
+const EXTENSION_VERSION = "0.3.2";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -827,7 +827,10 @@ async function callApi(params: Record<string, any>): Promise<Record<string, unkn
   const [namespace, method] = path.split(".");
   ensureApi(namespace, method);
 
-  const args = Array.isArray(params.args) ? params.args : [];
+  // Some APIs take a File, which cannot cross the bridge as JSON. A marker
+  // object is materialized here instead, so an import can be probed without
+  // shipping a new build for every argument shape tried.
+  const args = (Array.isArray(params.args) ? params.args : []).map(reviveArg);
   const result = await (eda as Record<string, any>)[namespace][method](...args);
 
   return {
@@ -953,6 +956,21 @@ async function updateSymbolSource(params: Record<string, any>): Promise<Record<s
       );
     }
   }
+}
+
+/** `{ __file: { content, name, type } }` becomes a real File. */
+function reviveArg(value: unknown): unknown {
+  if (!value || typeof value !== "object" || !("__file" in (value as Record<string, unknown>))) {
+    return value;
+  }
+  if (typeof File === "undefined") {
+    throw apiError("no_file_api", "File is unavailable in this context.");
+  }
+  const spec = (value as { __file: Record<string, unknown> }).__file ?? {};
+  const content = typeof spec.content === "string" ? spec.content : "";
+  const name = typeof spec.name === "string" ? spec.name : "probe.json";
+  const type = typeof spec.type === "string" ? spec.type : "application/json";
+  return new File([content], name, { type });
 }
 
 function requireUuid(value: unknown, caller: string): string {
