@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffSheet, parseProSource, readSheet, serializeProSource } from "./proSource.js";
+import { diffSheet, diffSnapshots, parseProSource, readSheet, serializeProSource } from "./proSource.js";
 
 const SOURCE = [
   '{"type":"DOCHEAD"}||{"docType":"SCH_PAGE","uuid":"page-1"}|',
@@ -50,7 +50,7 @@ describe("readSheet", () => {
   it("reads net labels with the wire they belong to", () => {
     const model = readSheet(parseProSource(SOURCE).records);
     expect(model.netLabels).toEqual([
-      { id: "e409", net: "PACK_NEG", x: 914, y: 196, wireId: "e408" }
+      { id: "e409", net: "PACK_NEG", x: 914, y: 196, wireId: "e408", source: "attr" }
     ]);
   });
 
@@ -131,5 +131,135 @@ describe("diffSheet", () => {
     });
     expect(diff.netsOnlyInIntent).toEqual(["VBAT_F"]);
     expect(diff.netsOnlyInLive).toEqual([]);
+  });
+});
+
+describe("diffSnapshots", () => {
+  // The edit that broke designator-keyed diffing: R1 renamed to R0 in place,
+  // and a real library resistor placed under the freed designator R1. Keyed on
+  // designator this reads as "R1 moved and changed part, R0 added" -- the old
+  // part is reported as having moved when it never left (60,170).
+  const before = readSheet(
+    parseProSource(
+      [
+        '{"type":"COMPONENT","id":"e10"}||{"partId":"100K G-PULLUP.1","x":60,"y":170}|',
+        '{"type":"ATTR","id":"a1"}||{"key":"Designator","value":"R1","parentId":"e10"}|',
+        '{"type":"ATTR","id":"a2"}||{"key":"Unique ID","value":"gge116","parentId":"e10"}|',
+        '{"type":"COMPONENT","id":"e2"}||{"partId":"PFET HI-SIDE.1","x":60,"y":90}|',
+        '{"type":"ATTR","id":"a3"}||{"key":"Designator","value":"Q1","parentId":"e2"}|'
+      ].join("\n")
+    ).records
+  );
+
+  const after = readSheet(
+    parseProSource(
+      [
+        '{"type":"COMPONENT","id":"e10"}||{"partId":"100K G-PULLUP.1","x":60,"y":170}|',
+        '{"type":"ATTR","id":"a1"}||{"key":"Designator","value":"R0","parentId":"e10"}|',
+        '{"type":"ATTR","id":"a2"}||{"key":"Unique ID","value":"gge116","parentId":"e10"}|',
+        '{"type":"COMPONENT","id":"e2"}||{"partId":"PFET HI-SIDE.1","x":-60,"y":100}|',
+        '{"type":"ATTR","id":"a3"}||{"key":"Designator","value":"Q1","parentId":"e2"}|',
+        '{"type":"COMPONENT","id":"5239e4e3dfcc8823"}||{"partId":"电阻.1","x":20,"y":330}|',
+        '{"type":"ATTR","id":"a4"}||{"key":"Designator","value":"R1","parentId":"5239e4e3dfcc8823"}|'
+      ].join("\n")
+    ).records
+  );
+
+  it("reports the rename as a rename, not a move", () => {
+    const changes = diffSnapshots(before, after);
+    const forE10 = changes.filter((change) => change.id === "e10");
+    expect(forE10).toHaveLength(1);
+    expect(forE10[0]).toMatchObject({ kind: "renamed", designator: "R0" });
+  });
+
+  it("does not claim the renamed part moved", () => {
+    const changes = diffSnapshots(before, after);
+    expect(changes.some((change) => change.id === "e10" && change.kind === "moved")).toBe(false);
+  });
+
+  it("reports the new component as added, under its own id", () => {
+    const changes = diffSnapshots(before, after);
+    const added = changes.filter((change) => change.kind === "added");
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ id: "5239e4e3dfcc8823", designator: "R1", origin: "editor" });
+  });
+
+  it("reports the genuine move", () => {
+    const changes = diffSnapshots(before, after);
+    expect(changes).toContainEqual(
+      expect.objectContaining({ id: "e2", kind: "moved", designator: "Q1" })
+    );
+  });
+
+  it("marks provenance so a hand edit is distinguishable from a generated part", () => {
+    expect(after.components.find((c) => c.id === "e10")?.origin).toBe("imported");
+    expect(after.components.find((c) => c.id === "5239e4e3dfcc8823")?.origin).toBe("editor");
+  });
+
+  it("reports a deletion", () => {
+    const changes = diffSnapshots(after, before);
+    expect(changes).toContainEqual(
+      expect.objectContaining({ id: "5239e4e3dfcc8823", kind: "removed" })
+    );
+  });
+});
+
+describe("net flags", () => {
+  // A label placed in the editor is a COMPONENT with no designator whose name
+  // is the net. Reading only ATTR key=NET reported "net labels 23 -> 23" for a
+  // sheet that had just gained one -- a false negative on the edit being looked
+  // for.
+  const withFlag = readSheet(
+    parseProSource(
+      [
+        '{"type":"COMPONENT","id":"e10"}||{"partId":"100K G-PULLUP.1","x":60,"y":170}|',
+        '{"type":"ATTR","id":"a1"}||{"key":"Designator","value":"R0","parentId":"e10"}|',
+        '{"type":"WIRE","id":"w1"}||{"zIndex":1}|',
+        '{"type":"LINE","id":"l1"}||{"startX":-50,"startY":320,"endX":-50,"endY":330,"lineGroup":"w1"}|',
+        '{"type":"COMPONENT","id":"flag1"}||{"partId":"pid8a0e77bacb214e","x":-50,"y":320}|',
+        '{"type":"ATTR","id":"a2"}||{"key":"Name","value":"NET1","parentId":"flag1"}|'
+      ].join("\n")
+    ).records
+  );
+
+  it("reads a net flag as a label, not as a part", () => {
+    expect(withFlag.components.map((component) => component.designator)).toEqual(["R0"]);
+    expect(withFlag.netLabels).toHaveLength(1);
+    expect(withFlag.netLabels[0]).toMatchObject({ net: "NET1", source: "flag" });
+  });
+
+  it("finds the wire a flag sits on, which it does not reference", () => {
+    expect(withFlag.netLabels[0].wireId).toBe("w1");
+  });
+
+  it("marks where each label came from", () => {
+    const model = readSheet(
+      parseProSource(
+        [
+          '{"type":"WIRE","id":"w1"}||{"zIndex":1}|',
+          '{"type":"ATTR","id":"n1"}||{"key":"NET","value":"GND","parentId":"w1","x":10,"y":10}|',
+          '{"type":"COMPONENT","id":"flag1"}||{"partId":"pid","x":-50,"y":320}|',
+          '{"type":"ATTR","id":"a2"}||{"key":"Name","value":"NET1","parentId":"flag1"}|'
+        ].join("\n")
+      ).records
+    );
+    expect(model.netLabels.map((label) => `${label.net}:${label.source}`).sort()).toEqual([
+      "GND:attr",
+      "NET1:flag"
+    ]);
+  });
+
+  it("matches a flag to a wire in either y orientation", () => {
+    const model = readSheet(
+      parseProSource(
+        [
+          '{"type":"WIRE","id":"w1"}||{"zIndex":1}|',
+          '{"type":"LINE","id":"l1"}||{"startX":140,"startY":-345,"endX":140,"endY":-355,"lineGroup":"w1"}|',
+          '{"type":"COMPONENT","id":"flag1"}||{"partId":"pid","x":140,"y":345}|',
+          '{"type":"ATTR","id":"a2"}||{"key":"Name","value":"GND","parentId":"flag1"}|'
+        ].join("\n")
+      ).records
+    );
+    expect(model.netLabels[0].wireId).toBe("w1");
   });
 });

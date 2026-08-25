@@ -6,7 +6,7 @@ import { PROTOCOL_VERSION, type EditorStatus } from "../protocol/messages.js";
 import { diffNetlist, parseProtel2Netlist, summarizeNetlist } from "./netlist.js";
 import { defaultConfigPath, listLocalProjects } from "./localProjects.js";
 import { KNOWN_LIMITATIONS, assessReadiness } from "./limitations.js";
-import { diffSheet, parseProSource, readSheet } from "./proSource.js";
+import { diffSheet, diffSnapshots, parseProSource, readSheet } from "./proSource.js";
 import { readStandardSheet } from "./standardSource.js";
 import {
   defaultSourcePath,
@@ -539,9 +539,18 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     {
       title: "Diff the live sheet against a generated one",
       description:
-        "Reads the open document and compares it with a generator's EasyEDA Standard JSON, reporting components added, removed, moved or re-parted in the editor, and nets present on only one side. This is how an edit made by hand is seen before it is ported back to the generator, and how a generated change is checked after import. Designator is the identity, so a moved part stays the same component while a renamed one reads as an add plus a remove.",
+        "Compares the open document against either a saved .epru snapshot (snapshotPath) or a generator's Standard JSON (generatedPath). Prefer the snapshot: it keys on record id, which survives renames, moves and part swaps, so a rename reads as a rename. The generator has no record ids, so that comparison keys on designator and misreads a rename-plus-replace -- renaming R1 to R0 and placing a new R1 shows the untouched part as moved and re-parted. Each change reports origin: imported means it came from the generated sheet, editor means someone placed it by hand.",
       inputSchema: {
-        generatedPath: z.string().min(1).describe("Path to the generator's sheet JSON, e.g. generated/ble-sheet.json."),
+        snapshotPath: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("A .epru saved earlier by easyeda_get_document_source. Exact: keyed on record id."),
+        generatedPath: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("The generator's sheet JSON. Approximate: keyed on designator, since generated sheets have no record ids."),
         includeUnchanged: z
           .boolean()
           .default(false)
@@ -555,31 +564,54 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
         openWorldHint: false
       }
     },
-    async ({ generatedPath, includeUnchanged, timeoutMs }) => {
+    async ({ snapshotPath, generatedPath, includeUnchanged, timeoutMs }) => {
       try {
+        if (!snapshotPath && !generatedPath) {
+          return fail(new Error("Provide snapshotPath (exact) or generatedPath (approximate)."));
+        }
+
         const live = (await bridge.call("getDocumentSource", {}, timeoutMs)) as { source?: string };
         const { records, unparsed } = parseProSource(live?.source ?? "");
         const liveModel = readSheet(records);
 
-        const intent = readStandardSheet(JSON.parse(await readSourceFile(generatedPath)));
-        const diff = diffSheet(liveModel, intent);
+        if (snapshotPath) {
+          const before = readSheet(parseProSource(await readSourceFile(snapshotPath)).records);
+          const changes = diffSnapshots(before, liveModel);
+          const byHand = changes.filter((change) => change.origin === "editor").length;
+          const headline = changes.length
+            ? `${changes.length} change(s) since ${snapshotPath}${byHand ? `, ${byHand} involving hand-placed parts` : ""}.`
+            : `No changes since ${snapshotPath}.`;
 
+          return ok(headline, {
+            comparedWith: snapshotPath,
+            identity: "record id",
+            liveCounts: liveModel.counts,
+            changes,
+            unchanged: includeUnchanged
+              ? liveModel.components
+                  .filter((component) => !changes.some((change) => change.id === component.id))
+                  .map((component) => component.designator ?? component.id)
+              : undefined,
+            unparsedLines: unparsed.length || undefined
+          });
+        }
+
+        const intent = readStandardSheet(JSON.parse(await readSourceFile(generatedPath as string)));
+        const diff = diffSheet(liveModel, intent);
         const headline = diff.changes.length
-          ? `${diff.changes.length} component difference(s) between the live sheet and ${generatedPath}.`
+          ? `${diff.changes.length} component difference(s) against ${generatedPath}. Keyed on designator, so a rename plus replace will read as a move.`
           : `Live sheet matches ${generatedPath} on components.`;
 
         return ok(headline, {
-          generatedPath,
+          comparedWith: generatedPath,
+          identity: "designator (approximate — generated sheets carry no record ids)",
           liveCounts: liveModel.counts,
           liveComponents: liveModel.components.length,
           intentComponents: intent.components.length,
           ...diff,
-          unchanged: includeUnchanged
-            ? liveModel.components
-                .filter((component) => component.designator)
-                .map((component) => component.designator)
-                .filter((designator) => !diff.changes.some((change) => change.designator === designator))
-            : undefined,
+          handPlaced: liveModel.components
+            .filter((component) => component.origin === "editor")
+            .map((component) => component.designator ?? component.id),
           unparsedLines: unparsed.length || undefined
         });
       } catch (error) {
