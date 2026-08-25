@@ -6,6 +6,8 @@ import { PROTOCOL_VERSION, type EditorStatus } from "../protocol/messages.js";
 import { diffNetlist, parseProtel2Netlist, summarizeNetlist } from "./netlist.js";
 import { defaultConfigPath, listLocalProjects } from "./localProjects.js";
 import { KNOWN_LIMITATIONS, assessReadiness } from "./limitations.js";
+import { diffSheet, parseProSource, readSheet } from "./proSource.js";
+import { readStandardSheet } from "./standardSource.js";
 import {
   defaultSourcePath,
   fileStamp,
@@ -525,6 +527,60 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
           documentInfo: result?.documentInfo,
           head: headLineCount ? headLines(source, headLineCount) : undefined,
           source: inline ? source : undefined
+        });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "easyeda_diff_sheet",
+    {
+      title: "Diff the live sheet against a generated one",
+      description:
+        "Reads the open document and compares it with a generator's EasyEDA Standard JSON, reporting components added, removed, moved or re-parted in the editor, and nets present on only one side. This is how an edit made by hand is seen before it is ported back to the generator, and how a generated change is checked after import. Designator is the identity, so a moved part stays the same component while a renamed one reads as an add plus a remove.",
+      inputSchema: {
+        generatedPath: z.string().min(1).describe("Path to the generator's sheet JSON, e.g. generated/ble-sheet.json."),
+        includeUnchanged: z
+          .boolean()
+          .default(false)
+          .describe("Also list components that match, for confirming coverage rather than finding changes."),
+        timeoutMs: DefaultTimeoutSchema.default(30_000)
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async ({ generatedPath, includeUnchanged, timeoutMs }) => {
+      try {
+        const live = (await bridge.call("getDocumentSource", {}, timeoutMs)) as { source?: string };
+        const { records, unparsed } = parseProSource(live?.source ?? "");
+        const liveModel = readSheet(records);
+
+        const intent = readStandardSheet(JSON.parse(await readSourceFile(generatedPath)));
+        const diff = diffSheet(liveModel, intent);
+
+        const headline = diff.changes.length
+          ? `${diff.changes.length} component difference(s) between the live sheet and ${generatedPath}.`
+          : `Live sheet matches ${generatedPath} on components.`;
+
+        return ok(headline, {
+          generatedPath,
+          liveCounts: liveModel.counts,
+          liveComponents: liveModel.components.length,
+          intentComponents: intent.components.length,
+          ...diff,
+          unchanged: includeUnchanged
+            ? liveModel.components
+                .filter((component) => component.designator)
+                .map((component) => component.designator)
+                .filter((designator) => !diff.changes.some((change) => change.designator === designator))
+            : undefined,
+          unparsedLines: unparsed.length || undefined
         });
       } catch (error) {
         return fail(error);
