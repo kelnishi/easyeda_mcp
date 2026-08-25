@@ -1233,8 +1233,12 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
           projectUuid = listed?.schematics?.find((entry) => entry?.parentProjectUuid)?.parentProjectUuid;
         }
 
+        // The field is `existingProjectUuid`. Naming it `projectUuid` produced a
+        // saveTo that was malformed but truthy, so EasyEDA silently did nothing
+        // and the extension's own default never filled in -- the import looked
+        // inert while a direct call with the documented shape worked.
         const saveTo = intoCurrentProject && projectUuid
-          ? { operation: "Existing Project", projectUuid }
+          ? { operation: "Existing Project", existingProjectUuid: projectUuid }
           : undefined;
 
         const result = (await bridge.call(

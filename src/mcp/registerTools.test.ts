@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { hasExplicitMutationConfirmation, registerEasyEdaTools } from "./registerTools.js";
 
 const clients: Client[] = [];
@@ -453,6 +455,39 @@ describe("import schematic", () => {
 
     expect(result.isError).toBe(true);
     expect(call).not.toHaveBeenCalled();
+  });
+
+  it("names the destination field the way the API spells it", async () => {
+    // `projectUuid` instead of `existingProjectUuid` builds a saveTo that is
+    // malformed but truthy, so EasyEDA does nothing and says nothing -- the
+    // import reads as inert while the same call made by hand works.
+    const dir = await mkdtemp(join(tmpdir(), "import-savetopath-"));
+    const sheet = join(dir, "sheet.json");
+    await writeFile(sheet, JSON.stringify({ head: {}, shape: [] }), "utf8");
+
+    const call = vi.fn(async (method: string) =>
+      method === "importProject" ? { schematicsBefore: 1, schematicsAfter: 2 } : {}
+    );
+    const client = await makeClient({
+      endpoint: "ws://127.0.0.1:8765",
+      getStatus: () => ({
+        connected: true,
+        updatedAt: new Date().toISOString(),
+        documentInfo: { parentProjectUuid: "proj-1" }
+      }),
+      call
+    });
+
+    await client.callTool({
+      name: "easyeda_import_schematic",
+      arguments: { filePath: sheet, confirmation: "confirmed: import the sheet" }
+    });
+
+    const [, params] = call.mock.calls.find(([method]) => method === "importProject")!;
+    expect((params as any).saveTo).toEqual({
+      operation: "Existing Project",
+      existingProjectUuid: "proj-1"
+    });
   });
 });
 
