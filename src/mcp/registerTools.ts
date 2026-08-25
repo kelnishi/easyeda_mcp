@@ -5,6 +5,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PROTOCOL_VERSION, type EditorStatus } from "../protocol/messages.js";
 import { diffNetlist, parseProtel2Netlist, summarizeNetlist } from "./netlist.js";
 import { defaultConfigPath, listLocalProjects } from "./localProjects.js";
+import { KNOWN_LIMITATIONS, assessReadiness } from "./limitations.js";
 import {
   defaultSourcePath,
   fileStamp,
@@ -124,7 +125,7 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     "easyeda_doctor",
     {
       title: "EasyEDA Pro bridge diagnostics",
-      description: "Returns a structured diagnosis of the local MCP bridge, EasyEDA Pro extension connection state, protocol compatibility, active document context, and suggested next steps.",
+      description: "Diagnoses the bridge: connection, protocol compatibility, whether a project and document are actually loaded, and the capabilities that are known not to work here with the route that does. Run this first in a new session -- several capabilities resolve successfully while doing nothing, and this states which before they are trusted.",
       inputSchema: {},
       annotations: {
         readOnlyHint: true,
@@ -137,11 +138,34 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
       const status = bridge.getStatus();
       const hasDocumentContext = Boolean(status.documentName || status.projectName || status.documentInfo);
       const nextSteps = doctorNextSteps(status);
-      const summary = status.connected
-        ? status.compatibility?.compatible === false
+
+      // Whether a project is loaded is the precondition everything else rests
+      // on, and it cannot be read from connection state alone.
+      let schematicCount: number | undefined;
+      if (status.connected) {
+        try {
+          const listed = (await bridge.call("listSchematics", {}, 15_000)) as {
+            schematics?: unknown[];
+          };
+          schematicCount = Array.isArray(listed?.schematics) ? listed.schematics.length : 0;
+        } catch {
+          schematicCount = undefined;
+        }
+      }
+
+      const readiness = assessReadiness({
+        connected: status.connected,
+        schematicCount,
+        activeDocumentType: status.activeDocumentType
+      });
+
+      const summary = !status.connected
+        ? "Bridge diagnostics found that the EasyEDA Pro extension is disconnected."
+        : status.compatibility?.compatible === false
           ? "Bridge diagnostics found a protocol compatibility problem."
-          : "Bridge diagnostics look healthy."
-        : "Bridge diagnostics found that the EasyEDA Pro extension is disconnected.";
+          : readiness.blocking.length
+            ? `Bridge is connected but not ready: ${readiness.blocking[0]}`
+            : "Bridge is connected and ready.";
       return ok(summary, {
         doctor: {
           server: {
@@ -170,8 +194,10 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
             projectName: status.projectName,
             documentName: status.documentName
           },
+          readiness,
+          knownLimitations: KNOWN_LIMITATIONS,
           status,
-          nextSteps
+          nextSteps: [...readiness.blocking, ...nextSteps]
         }
       });
     }
