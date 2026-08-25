@@ -549,6 +549,10 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
           .boolean()
           .default(false)
           .describe("Skip the safety backup. Only for a document you are willing to lose."),
+        allowEmpty: z
+          .boolean()
+          .default(false)
+          .describe("Permit a source with no recognizable records. Only to deliberately blank a document."),
         timeoutMs: DefaultTimeoutSchema.default(60_000)
       },
       annotations: {
@@ -558,7 +562,7 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
         openWorldHint: false
       }
     },
-    async ({ filePath, source, confirmation, backupPath, skipBackup, timeoutMs }) => {
+    async ({ filePath, source, confirmation, backupPath, skipBackup, allowEmpty, timeoutMs }) => {
       try {
         if (!hasExplicitMutationConfirmation(confirmation)) {
           return fail(
@@ -575,6 +579,23 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
         }
 
         const nextSource = source ?? (await readSourceFile(filePath as string));
+
+        // A source with no recognizable records is almost certainly the wrong
+        // format -- EasyEDA Standard generator JSON, say -- and EasyEDA accepts
+        // it, reports applied:true, and leaves the document holding nothing but
+        // DOCHEAD and CANVAS. That is how a populated sheet gets wiped by a call
+        // that reports success.
+        const incoming = summarizeSource(nextSource);
+        const recordCount = Object.values(incoming.recordTypes).reduce((sum, n) => sum + n, 0);
+        if (recordCount === 0 && !allowEmpty) {
+          return fail(
+            new Error(
+              "Refused: this source contains no EasyEDA Pro records. Document source is JSON-lines like " +
+                '{"type":"COMPONENT",...}||{...}| -- not EasyEDA Standard generator JSON, which is a different ' +
+                "format and would leave the document empty. Pass allowEmpty to override."
+            )
+          );
+        }
 
         // The write replaces the whole document, so a backup is worth more than
         // the round trip it costs. Failing to back up aborts the write.

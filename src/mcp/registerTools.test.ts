@@ -521,6 +521,41 @@ describe("document source tools", () => {
     expect(await readFile(structured.path as string, "utf8")).toBe(SOURCE);
   });
 
+  it("refuses a source with no EasyEDA Pro records", async () => {
+    // Writing EasyEDA Standard generator JSON here returned applied:true and
+    // left the document holding only DOCHEAD and CANVAS -- a populated sheet
+    // wiped by a call that reported success.
+    const call = vi.fn();
+    const client = await makeClient(bridgeWith(call));
+
+    const result = await client.callTool({
+      name: "easyeda_set_document_source",
+      arguments: {
+        source: JSON.stringify({ head: { docType: "1" }, shape: ["W~1 2 3 4~"] }),
+        confirmation: "confirmed: write it"
+      }
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toMatch(/no EasyEDA Pro records/i);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("allows a deliberately empty document when asked", async () => {
+    const call = vi.fn(async (method: string) =>
+      method === "getDocumentSource" ? { source: "OLD" } : { applied: true }
+    );
+    const client = await makeClient(bridgeWith(call as never));
+
+    const result = await client.callTool({
+      name: "easyeda_set_document_source",
+      arguments: { source: "nothing parsable", confirmation: "confirmed: blank it", allowEmpty: true }
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(call).toHaveBeenCalled();
+  });
+
   it("refuses to write without an explicit confirmation", async () => {
     const call = vi.fn();
     const client = await makeClient(bridgeWith(call));
