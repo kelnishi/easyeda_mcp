@@ -80,7 +80,7 @@ export function assessReadiness(input: {
   const blocking: string[] = [];
   if (!input.connected) {
     blocking.push(
-      "The extension is not connected. If a project is open and its menu is missing, quit and relaunch EasyEDA Pro with the project open — activation fires at launch."
+      "The extension is not connected. Loading a project unmounts it — its menu disappears and the bridge drops. Opening any schematic in the editor remounts it and reconnects. That click cannot be made through the bridge, since nothing reaches a dead extension."
     );
   } else if (!projectLoaded) {
     blocking.push(

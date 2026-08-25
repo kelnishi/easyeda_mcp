@@ -75,6 +75,20 @@ Moving a component means moving four things: its `COMPONENT` record, every
 pin, and the net-label `ATTR` at each stub's far end. Miss the stub and the pin
 goes silently unconnected.
 
+## Loading a project unmounts the extension
+
+The renderer reloads on project load, taking the extension's JS context with it:
+its menu disappears and the bridge drops. Opening any schematic fires an
+activation event that mounts it again and reconnects.
+
+The click cannot be made through the bridge — nothing reaches a dead extension —
+so it is the one unavoidable manual step per project load.
+
+`activationEvents` carries several candidate names because the field is
+documented only as a "feature in working". `onStartupFinished` is confirmed at
+app launch; which entry covers schematic open has not been isolated, so do not
+prune the list without retesting both paths.
+
 ## Cloud-backed calls fail on a local project
 
 An install configured `"type": "HALF_OFFLINE"` with a project held in a local
