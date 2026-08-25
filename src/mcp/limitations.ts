@@ -31,10 +31,21 @@ export type Readiness = {
 export const KNOWN_LIMITATIONS: Limitation[] = [
   {
     capability: "easyeda_import_schematic",
-    behaviour: "Resolves with no effect and writes no log entry, so it never attempts the work.",
+    behaviour: "Works as of extension 0.3.6. Imports the sheet, but binds no footprints.",
     cause:
       "sys_FileManager.importProjectByProjectFile works when given saveTo {operation:'Existing Project', existingProjectUuid}. Without it the call is a silent no-op, which is what made it look inert. It does not bind footprints on a local project even with associateFootprint:true -- components arrive carrying an Origin Footprint name only, and the DRC still reports one fatal error each.",
-    instead: "Import through File -> Import in the editor."
+    instead: "Nothing, for the import itself. For footprints, write the Footprint attribute onto each component through the document-source path using a project-local footprint uuid -- a uuid already in the project library is accepted, unlike a Device uuid."
+  },
+  {
+    capability: "lib_Footprint.delete / lib_Device.get / search / copy",
+    behaviour: "Throw an empty Error, or resolve with undefined.",
+    cause:
+      "They need a libraryUuid and none is obtainable offline: getAllLibrariesList returns [], " +
+      "getPersonalLibraryUuid returns undefined, and getProjectLibraryUuid returns the sentinel " +
+      "string 'project', which delete rejects. The project library therefore cannot be pruned -- " +
+      "and it grows with every import, which extracts a fresh device, symbol and footprint per " +
+      "component instance and leaves them behind when the schematic is deleted.",
+    instead: "Nothing reachable. Treat library bloat as a cost of iterating, not something to clean up."
   },
   {
     capability: "easyeda_open_project",
