@@ -1040,7 +1040,7 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     {
       title: "Import a schematic file into EasyEDA Pro",
       description:
-        "Imports an EasyEDA Standard JSON sheet (the format the generators emit) into the open project, removing the last manual step from the ingest loop. fileType 'EasyEDA' is the Standard edition format; 'EasyEDA Pro' is the Pro project format. Verify the result afterwards -- an import that lands can still produce symbols without pins.",
+        "NON-FUNCTIONAL on a local project as of extension 0.3.4: the underlying sys_FileManager.importProjectByProjectFile returns undefined and writes no log entry, whether given a saveTo, no saveTo, or a docType-5 project envelope, so it never attempts the work. Use File -> Import in the editor instead. Kept because the API may begin working in a later editor build; check whether the schematic count actually moves before believing a success.",
       inputSchema: {
         filePath: z.string().min(1).describe("Local path to the sheet JSON to import."),
         fileType: z
