@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.4.0";
+const EXTENSION_VERSION = "0.4.1";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -842,7 +842,9 @@ async function callApi(params: Record<string, any>): Promise<Record<string, unkn
   // Some APIs take a File, which cannot cross the bridge as JSON. A marker
   // object is materialized here instead, so an import can be probed without
   // shipping a new build for every argument shape tried.
-  const args = (Array.isArray(params.args) ? params.args : []).map(reviveArg);
+  const args = await Promise.all(
+    (Array.isArray(params.args) ? params.args : []).map(reviveArg)
+  );
   const result = await (eda as Record<string, any>)[namespace][method](...args);
 
   return {
@@ -970,8 +972,29 @@ async function updateSymbolSource(params: Record<string, any>): Promise<Record<s
   }
 }
 
-/** `{ __file: { content | base64, name, type } }` becomes a real File. */
-function reviveArg(value: unknown): unknown {
+/**
+ * `{ __file: { content | base64, name, type } }` becomes a real File, and
+ * `{ __call: { path, args } }` becomes whatever that API returns.
+ *
+ * The second exists because several APIs take an object another API produces --
+ * `extractLibInfo` wants the File that `getProjectFile` returns, and a File
+ * cannot cross the bridge as a result any more than it can as an argument. One
+ * round trip that chains them is the only way to reach the pair.
+ */
+async function reviveArg(value: unknown): Promise<unknown> {
+  if (value && typeof value === "object" && "__call" in (value as Record<string, unknown>)) {
+    const spec = (value as { __call: Record<string, unknown> }).__call ?? {};
+    const path = typeof spec.path === "string" ? spec.path : "";
+    const [ns, method] = path.split(".");
+    if (!ns || !method) {
+      throw apiError("bad_path", 'A __call argument needs a dotted path such as "sys_FileManager.getProjectFile".');
+    }
+    ensureApi(ns, method);
+    const inner = await Promise.all(
+      (Array.isArray(spec.args) ? spec.args : []).map(reviveArg)
+    );
+    return await (eda as Record<string, any>)[ns][method](...inner);
+  }
   if (!value || typeof value !== "object" || !("__file" in (value as Record<string, unknown>))) {
     return value;
   }

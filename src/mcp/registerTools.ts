@@ -871,7 +871,12 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
         args: z
           .array(z.unknown())
           .default([])
-          .describe('Positional arguments. Use {"__file":{"content":"...","name":"x.json"}} where the API wants a File.'),
+          .describe(
+            'Positional arguments. Use {"__file":{"content":"...","name":"x.json"}} where the API wants a File, ' +
+            'or {"__call":{"path":"sys_FileManager.getProjectFile","args":[]}} to pass whatever another API returns. ' +
+            'The second reaches pairs like extractLibInfo(getProjectFile()), where the argument is an object a ' +
+            'previous call produced and a File cannot cross the bridge as a result.'
+          ),
         fileArg: z
           .object({ index: z.number().int().min(0), filePath: z.string().min(1), name: z.string().min(1).optional() })
           .optional()
