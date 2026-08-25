@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.4.1";
+const EXTENSION_VERSION = "0.4.2";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -1488,11 +1488,26 @@ function apiError(code: string, message: string, details?: unknown): Error & { c
 
 function normalizeError(error: unknown): BridgeErrorMessage["error"] {
   if (error instanceof Error) {
-    const coded = error as Error & { code?: string; details?: unknown };
+    const coded = error as Error & { code?: string; details?: unknown; cause?: unknown };
+    // EasyEDA sometimes builds an Error by concatenating an object into a
+    // string, so the message arrives as the literal "[object Object]" and says
+    // nothing. The object itself is usually still hanging off the Error as own
+    // properties or a cause, and that is the only place the reason survives.
+    let message = error.message;
+    if (!message || message === "[object Object]") {
+      const carried =
+        (coded.cause && typeof coded.cause === "object" ? coded.cause : undefined) ??
+        (Object.keys(coded).length ? { ...coded } : undefined);
+      message =
+        (carried && pickString(carried as Record<string, unknown>,
+                               ["message", "msg", "error", "reason", "description"])) ??
+        (carried && safeJson(carried as Record<string, unknown>)) ??
+        `${error.name}: no message, and no properties carrying one.`;
+    }
     return {
       code: coded.code ?? "easyeda_extension_error",
-      message: error.message,
-      details: sanitize(coded.details)
+      message,
+      details: sanitize(coded.details ?? coded.cause)
     };
   }
   // EasyEDA rejects with plain objects, and String() renders those as

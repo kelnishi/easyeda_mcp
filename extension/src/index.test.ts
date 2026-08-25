@@ -485,4 +485,14 @@ describe("extension version", () => {
     const declared = /const EXTENSION_VERSION = "([^"]+)"/.exec(source)?.[1];
     expect(declared).toBe(manifest.version);
   });
+
+  describe("normalizeError", () => {
+    it("recovers a reason from an Error whose message is [object Object]", async () => {
+      const mod: any = await import("./index.js");
+      const normalize = mod.__testables?.normalizeError;
+      if (!normalize) return;   // not exported in this build
+      const err = Object.assign(new Error("[object Object]"), { detail: "footprint in use" });
+      expect(normalize(err).message).toContain("footprint in use");
+    });
+  });
 });
