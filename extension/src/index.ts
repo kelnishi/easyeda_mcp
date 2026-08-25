@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.3.2";
+const EXTENSION_VERSION = "0.3.3";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -116,20 +116,32 @@ const handlers: Record<string, (params: Record<string, any>) => Promise<unknown>
   confirmedAction
 };
 
+/**
+ * `void promise` does not catch anything. A rejected connection attempt escaped
+ * as an unhandledRejection, and with retries continuing indefinitely the editor
+ * logged one every five seconds -- enough noise to look like the extension
+ * misbehaving, which is what unloads it.
+ */
+function fireAndForget(promise: Promise<unknown>): void {
+  promise.catch((error) => {
+    log("warn", "Bridge connection attempt rejected", error);
+  });
+}
+
 export function activate(status?: "onStartupFinished", arg?: string): void {
   log("warn", `EasyEDA MCP Bridge activated: ${status ?? "manual"} ${arg ?? ""}`);
-  void ensureBridgeConnected({ reason: "activation", manual: false });
+  fireAndForget(ensureBridgeConnected({ reason: "activation", manual: false }));
 }
 
 export function connect(): void {
-  void ensureBridgeConnected({ reason: "manual-connect", manual: true, resetAttempts: true });
+  fireAndForget(ensureBridgeConnected({ reason: "manual-connect", manual: true, resetAttempts: true }));
 }
 
 export function reconnect(): void {
   resetConnectionTimers();
   connectionState.phase = "idle";
   connectionState.attemptIndex = 0;
-  void ensureBridgeConnected({ reason: "manual-reconnect", manual: true, resetAttempts: true });
+  fireAndForget(ensureBridgeConnected({ reason: "manual-reconnect", manual: true, resetAttempts: true }));
 }
 
 export async function showStatus(): Promise<void> {
@@ -353,10 +365,10 @@ function handleConnectionFailure(
     connectionState.attemptIndex = nextAttempt;
     connectionState.reconnectTimer = setTimeout(() => {
       connectionState.reconnectTimer = undefined;
-      void ensureBridgeConnected({
+      fireAndForget(ensureBridgeConnected({
         reason: wasExhausted ? "retry-steady" : "retry",
         manual: false
-      });
+      }));
     }, delayMs);
   }
 

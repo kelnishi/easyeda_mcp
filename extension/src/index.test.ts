@@ -407,6 +407,33 @@ describe("EasyEDA extension bridge handlers", () => {
     expect(message.error.message).toContain("upstream");
   });
 
+  it("does not leak an unhandled rejection per connection attempt", async () => {
+    // The editor logged one unhandledRejection every five seconds -- one per
+    // retry -- because `void promise` catches nothing. That noise is what makes
+    // an extension look like it is misbehaving.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => unhandled.push(error);
+    process.on("unhandledRejection", onUnhandled);
+    vi.useFakeTimers();
+    try {
+      const socket = (globalThis as { eda: any }).eda.sys_WebSocket;
+      socket.register.mockImplementation(() => {
+        throw new Error("connection refused");
+      });
+
+      const extension = await import("./index.js");
+      extension.activate("onStartupFinished");
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.runOnlyPendingTimersAsync();
+    } finally {
+      vi.useRealTimers();
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(unhandled).toEqual([]);
+  });
+
   it("keeps retrying after the configured delays are spent", async () => {
     // The editor starts before the server does, so the first attempts fail by
     // definition. Stopping there left the bridge down until someone clicked
