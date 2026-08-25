@@ -33,7 +33,7 @@ export const KNOWN_LIMITATIONS: Limitation[] = [
     capability: "easyeda_import_schematic",
     behaviour: "Resolves with no effect and writes no log entry, so it never attempts the work.",
     cause:
-      "sys_FileManager.importProjectByProjectFile is inert here. Tried with a saveTo, without one, and with a docType-5 project envelope; the File arrives intact each time.",
+      "sys_FileManager.importProjectByProjectFile works when given saveTo {operation:'Existing Project', existingProjectUuid}. Without it the call is a silent no-op, which is what made it look inert. It does not bind footprints on a local project even with associateFootprint:true -- components arrive carrying an Origin Footprint name only, and the DRC still reports one fatal error each.",
     instead: "Import through File -> Import in the editor."
   },
   {

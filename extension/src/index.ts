@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.3.5";
+const EXTENSION_VERSION = "0.3.6";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -1033,12 +1033,25 @@ async function importProject(params: Record<string, any>): Promise<Record<string
   const fileType = params.fileType ?? "EasyEDA";
   const file = new File([content], fileName, { type: "application/json" });
 
+  // Without a destination the import silently does nothing: it returns
+  // undefined, writes no log entry, and the schematic count never moves -- which
+  // read for a long time as the API being inert. It is not. It had nowhere to
+  // put the document. Default to the open project so the common case works.
+  let saveTo = params.saveTo;
+  if (!saveTo) {
+    const project = await optionalCall(() => eda.dmt_Project?.getCurrentProjectInfo());
+    const uuid = (project as any)?.uuid;
+    if (uuid) {
+      saveTo = { operation: "Existing Project", existingProjectUuid: uuid };
+    }
+  }
+
   const before = await optionalCall(() => eda.dmt_Schematic?.getAllSchematicsInfo());
   const result = await eda.sys_FileManager.importProjectByProjectFile(
     file,
     fileType,
-    params.props,
-    params.saveTo,
+    params.props ?? { importOption: "ImportDocument", associateFootprint: true },
+    saveTo,
     params.librariesImportSetting
   );
   const after = await optionalCall(() => eda.dmt_Schematic?.getAllSchematicsInfo());

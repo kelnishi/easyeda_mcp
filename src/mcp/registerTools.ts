@@ -1175,7 +1175,7 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     {
       title: "Import a schematic file into EasyEDA Pro",
       description:
-        "NON-FUNCTIONAL on a local project as of extension 0.3.4: the underlying sys_FileManager.importProjectByProjectFile returns undefined and writes no log entry, whether given a saveTo, no saveTo, or a docType-5 project envelope, so it never attempts the work. Use File -> Import in the editor instead. Kept because the API may begin working in a later editor build; check whether the schematic count actually moves before believing a success.",
+        "Works as of extension 0.3.6. It read as inert for a long time because the import needs a destination: with no `saveTo` it returns undefined, writes no log entry, and the schematic count never moves. The extension now defaults `saveTo` to the open project. Footprint association is a separate matter -- `associateFootprint` is passed but does not bind footprints on a local project, so imported components carry an Origin Footprint name and no footprint. Check that the schematic count actually moved before believing a success.",
       inputSchema: {
         filePath: z.string().min(1).describe("Local path to the sheet JSON to import."),
         fileType: z
