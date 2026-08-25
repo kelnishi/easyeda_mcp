@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.3.0";
+const EXTENSION_VERSION = "0.3.1";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -337,21 +337,33 @@ function handleConnectionFailure(
   connectionState.compatibility = evaluateProtocolCompatibility(PROTOCOL_VERSION);
   connectionState.phase = isPermissionLikeError(error) ? "blocked" : "idle";
 
-  const hasRetryLeft = options.shouldRetry && connectionState.attemptIndex < bridgeConfig.reconnectDelayMs.length - 1;
-  if (hasRetryLeft) {
-    const nextAttempt = connectionState.attemptIndex + 1;
+  // The editor almost always starts before the MCP server does, so the first
+  // few attempts fail by definition. Giving up after the configured list meant
+  // the bridge stayed down until someone clicked Connect -- for the whole life
+  // of the editor, however long after the server appeared. Retrying forever at
+  // the final delay lets it attach on its own, which also covers a server
+  // restart and a new editor window.
+  const lastIndex = bridgeConfig.reconnectDelayMs.length - 1;
+  const wasExhausted = connectionState.attemptIndex >= lastIndex;
+  const shouldRetry = options.shouldRetry && connectionState.phase !== "blocked";
+
+  if (shouldRetry) {
+    const nextAttempt = Math.min(connectionState.attemptIndex + 1, lastIndex);
     const delayMs = bridgeConfig.reconnectDelayMs[nextAttempt];
     connectionState.attemptIndex = nextAttempt;
     connectionState.reconnectTimer = setTimeout(() => {
       connectionState.reconnectTimer = undefined;
       void ensureBridgeConnected({
-        reason: "retry",
+        reason: wasExhausted ? "retry-steady" : "retry",
         manual: false
       });
     }, delayMs);
   }
 
-  if (options.manual || !hasRetryLeft || connectionState.phase === "blocked") {
+  // Announce once, when the fast attempts are spent. Retrying forever must not
+  // mean a dialog forever.
+  const firstGiveUp = !wasExhausted && connectionState.attemptIndex >= lastIndex;
+  if (options.manual || firstGiveUp || !shouldRetry || connectionState.phase === "blocked") {
     showMessage("EasyEDA MCP Bridge", [
       error.message,
       "",

@@ -407,6 +407,32 @@ describe("EasyEDA extension bridge handlers", () => {
     expect(message.error.message).toContain("upstream");
   });
 
+  it("keeps retrying after the configured delays are spent", async () => {
+    // The editor starts before the server does, so the first attempts fail by
+    // definition. Stopping there left the bridge down until someone clicked
+    // Connect, which is what every reconnect in this project has been.
+    vi.useFakeTimers();
+    try {
+      const extension = await import("./index.js");
+      const socket = (globalThis as { eda: any }).eda.sys_WebSocket;
+
+      extension.activate("onStartupFinished");
+      // Never call onOpen: the socket never connects, so every attempt times out.
+      await vi.advanceTimersByTimeAsync(12_000);
+      const afterSchedule = socket.register.mock.calls.length;
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      const afterMore = socket.register.mock.calls.length;
+
+      // The configured schedule allows four attempts. Anything beyond that is
+      // the steady-state retry, which is the whole point.
+      expect(afterSchedule).toBeGreaterThan(1);
+      expect(afterMore).toBeGreaterThan(8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows diagnostics with connection and document details", async () => {
     const extension = await import("./index.js");
 
