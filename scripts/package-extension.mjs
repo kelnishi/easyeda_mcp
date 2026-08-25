@@ -8,6 +8,29 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const defaultExtensionRoot = path.join(repoRoot, "extension");
 const defaultDistRoot = path.join(repoRoot, "build", "dist");
 
+/**
+ * The archive must carry the code the manifest claims.
+ *
+ * `npm run build` compiles the server; the extension bundle has a script of its
+ * own, and skipping it leaves the previous dist/index.js in place. Three
+ * releases shipped that way -- a manifest saying 0.4.1 wrapped around code
+ * saying 0.3.5 -- and every reinstall was a silent no-op, which read as the
+ * editor refusing to load the extension rather than as a packaging bug.
+ */
+export function assertBundleMatchesManifest(extensionRoot, manifest) {
+  const bundle = path.join(extensionRoot, "dist", "index.js");
+  if (!fs.existsSync(bundle)) {
+    throw new Error(`No built bundle at ${bundle}. Run \`npm run build:extension\` first.`);
+  }
+  const declared = /EXTENSION_VERSION\s*=\s*"([^"]+)"/.exec(fs.readFileSync(bundle, "utf8"));
+  if (declared && declared[1] !== manifest.version) {
+    throw new Error(
+      `Refusing to package a stale bundle: dist/index.js is ${declared[1]} but ` +
+      `extension.json is ${manifest.version}. Run \`npm run build:extension\`.`
+    );
+  }
+}
+
 export async function packageExtension(options = {}) {
   const extensionRoot = options.extensionRoot ?? defaultExtensionRoot;
   const distRoot = options.distRoot ?? defaultDistRoot;
@@ -16,6 +39,7 @@ export async function packageExtension(options = {}) {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
   validateManifest(manifest);
+  assertBundleMatchesManifest(extensionRoot, manifest);
 
   const ignoreRules = fs.existsSync(ignorePath) ? fs.readFileSync(ignorePath, "utf8").split(/\r?\n/) : [];
   const matcher = ignore().add(ignoreRules);

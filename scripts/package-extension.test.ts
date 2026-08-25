@@ -51,6 +51,31 @@ describe("package-extension script", () => {
     expect(Object.keys(archive.files)).not.toContain("secret.txt");
   });
 
+  it("refuses to ship a bundle built from a different version than the manifest", async () => {
+    // Three releases went out packaged around stale JavaScript. `npm run build`
+    // compiles the server; the extension bundle has its own script, and skipping
+    // it leaves the previous dist/index.js in place. The manifest said 0.4.1 and
+    // the code in the archive said 0.3.5, so every reinstall was a no-op and the
+    // failure looked like the editor refusing to load the new extension.
+    const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "eext-stale-"));
+    const distRoot = fs.mkdtempSync(path.join(os.tmpdir(), "eext-stale-dist-"));
+    writeJson(path.join(extensionRoot, "extension.json"), {
+      name: "easyeda-mcp-bridge",
+      uuid: "easyedamcpbridge202605240001abcd",
+      version: "0.4.1",
+      entry: "./dist/index"
+    });
+    fs.mkdirSync(path.join(extensionRoot, "dist"), { recursive: true });
+    fs.writeFileSync(
+      path.join(extensionRoot, "dist", "index.js"),
+      'const EXTENSION_VERSION = "0.3.5";\n'
+    );
+
+    await expect(packageExtension({ extensionRoot, distRoot })).rejects.toThrow(
+      /0\.3\.5.*0\.4\.1|stale/i
+    );
+  });
+
   it("rejects invalid manifest names", () => {
     expect(() =>
       validateManifest({
