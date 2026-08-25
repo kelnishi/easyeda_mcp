@@ -65,3 +65,14 @@ describe("source files", () => {
     await expect(readSourceFile(path)).rejects.toThrow(/empty/i);
   });
 });
+
+describe("whitespace tolerance", () => {
+  it("counts records serialized with spaces after the colon", () => {
+    // Exactly what JSON.stringify and json.dumps produce by default. EasyEDA
+    // parsed such a file happily while this counter saw nothing -- and the
+    // empty-source guard uses this count to decide whether a write blanks the
+    // document.
+    const spaced = '{"type": "COMPONENT", "id": "x"}||{"partId": "R.1"}|';
+    expect(summarizeSource(spaced).recordTypes).toEqual({ COMPONENT: 1 });
+  });
+});

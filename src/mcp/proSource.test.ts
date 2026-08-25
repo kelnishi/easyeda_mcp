@@ -263,3 +263,15 @@ describe("net flags", () => {
     expect(model.netLabels[0].wireId).toBe("w1");
   });
 });
+
+describe("whitespace tolerance", () => {
+  it("parses records serialized with spaces, as a generator produces them", () => {
+    const spaced = [
+      '{"type": "COMPONENT", "id": "r3"}||{"partId": "\u7535\u963b.1", "x": 20, "y": 430}|',
+      '{"type": "ATTR", "id": "a1"}||{"key": "Designator", "value": "R3", "parentId": "r3"}|'
+    ].join("\n");
+    const model = readSheet(parseProSource(spaced).records);
+    expect(model.components).toHaveLength(1);
+    expect(model.components[0]).toMatchObject({ designator: "R3", x: 20, y: 430 });
+  });
+});

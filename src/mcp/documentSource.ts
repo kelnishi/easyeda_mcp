@@ -12,7 +12,10 @@ import { tmpdir } from "node:os";
  * that imported as a bare rectangle shows up as RECT and ATTR records with no
  * PIN records at all, which no amount of component-level inspection reveals.
  */
-const RECORD_TYPE = /^\{"type":"([A-Z_]+)"/;
+// Whitespace-tolerant for the same reason, and it matters more here: the
+// empty-source guard counts these records to decide whether a write would blank
+// the document. A miscount refuses a valid write, or lets a destructive one past.
+const RECORD_TYPE = /^\{\s*"type"\s*:\s*"([A-Z_]+)"/;
 
 export type SourceSummary = {
   byteLength: number;

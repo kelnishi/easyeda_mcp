@@ -17,7 +17,10 @@ export type ProRecord = {
   payload: Record<string, unknown>;
 };
 
-const LINE = /^(\{"type":"[A-Z_]+"[^|]*\})\|\|(\{.*\})\|\s*$/;
+// Tolerant of whitespace after the colon: EasyEDA emits none, but a record
+// generated with a standard JSON serializer has a space, and requiring the
+// compact form made valid generated source parse as no records at all.
+const LINE = /^(\{\s*"type"\s*:\s*"[A-Z_]+"[^|]*\})\|\|(\{.*\})\|\s*$/;
 
 export function parseProSource(text: string): { records: ProRecord[]; unparsed: string[] } {
   const records: ProRecord[] = [];
