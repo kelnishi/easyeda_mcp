@@ -45,7 +45,7 @@ type BridgeErrorMessage = {
 };
 
 const WS_ID = "easyeda-mcp-bridge";
-const EXTENSION_VERSION = "0.3.6";
+const EXTENSION_VERSION = "0.4.0";
 const bridgeConfig = getBridgeConfig();
 
 type ConnectionPhase = "idle" | "connecting" | "connected" | "blocked";
@@ -970,7 +970,7 @@ async function updateSymbolSource(params: Record<string, any>): Promise<Record<s
   }
 }
 
-/** `{ __file: { content, name, type } }` becomes a real File. */
+/** `{ __file: { content | base64, name, type } }` becomes a real File. */
 function reviveArg(value: unknown): unknown {
   if (!value || typeof value !== "object" || !("__file" in (value as Record<string, unknown>))) {
     return value;
@@ -979,9 +979,18 @@ function reviveArg(value: unknown): unknown {
     throw apiError("no_file_api", "File is unavailable in this context.");
   }
   const spec = (value as { __file: Record<string, unknown> }).__file ?? {};
-  const content = typeof spec.content === "string" ? spec.content : "";
   const name = typeof spec.name === "string" ? spec.name : "probe.json";
   const type = typeof spec.type === "string" ? spec.type : "application/json";
+  if (typeof spec.base64 === "string") {
+    // Text would corrupt a zip, so binary arrives base64-encoded.
+    const binary = atob(spec.base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new File([bytes], name, { type });
+  }
+  const content = typeof spec.content === "string" ? spec.content : "";
   return new File([content], name, { type });
 }
 

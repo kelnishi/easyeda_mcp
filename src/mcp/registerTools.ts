@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import * as z from "zod/v4";
 import type { EasyEdaBridge } from "../bridge/EasyEdaBridge.js";
 import { ok, fail } from "./toolResult.js";
@@ -894,10 +895,19 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
         }
         const finalArgs = [...args];
         if (fileArg) {
-          const content = await readSourceFile(fileArg.filePath);
-          finalArgs[fileArg.index] = {
-            __file: { content, name: fileArg.name ?? fileArg.filePath.split("/").pop() }
-          };
+          const name = fileArg.name ?? fileArg.filePath.split("/").pop() ?? "probe.json";
+          // A zip cannot survive being read as text: the round trip through
+          // UTF-8 mangles every byte outside ASCII. Binary rides as base64 and
+          // is rebuilt on the far side.
+          if (/\.(zip|eprj2|epro2)$/i.test(name)) {
+            const bytes = await readFile(fileArg.filePath);
+            finalArgs[fileArg.index] = {
+              __file: { base64: bytes.toString("base64"), name, type: "application/zip" }
+            };
+          } else {
+            const content = await readSourceFile(fileArg.filePath);
+            finalArgs[fileArg.index] = { __file: { content, name } };
+          }
         }
         const result = (await bridge.call("callApi", { path, args: finalArgs }, timeoutMs)) as { resultType?: string };
         return ok(`Called ${path} (returned ${result?.resultType ?? "unknown"}).`, { result });
